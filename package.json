@@ -1,0 +1,13 @@
+{
+  "name": "hermes-mobile",
+  "private": true,
+  "packageManager": "pnpm@10.28.0",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "bff": "pnpm --filter @hermes-mobile/bff dev",
+    "pair": "pnpm --filter @hermes-mobile/bff pair",
+    "mobile": "pnpm --filter @hermes-mobile/mobile start",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test"
+  }
+}
