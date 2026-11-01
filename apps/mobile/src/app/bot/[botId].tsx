@@ -24,6 +24,12 @@ type ChatState =
   | { kind: 'unreachable' }
   | { kind: 'error'; message: string };
 
+/** What went wrong with the last turn, and what the user can do about it. */
+type Notice =
+  | { kind: 'not-sent'; message: string; clientMessageId: string; text: string }
+  | { kind: 'lost'; message: string }
+  | { kind: 'info'; message: string };
+
 function toLines(messages: SessionMessage[]): Line[] {
   return messages
     .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content)
@@ -47,10 +53,13 @@ export default function BotChatScreen() {
   const [state, setState] = useState<ChatState>({ kind: 'loading' });
   const [history, setHistory] = useState<Line[]>([]);
   const [pending, setPending] = useState<Line[]>([]);
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [draft, setDraft] = useState('');
   const [runId, setRunId] = useState<string | null>(null);
   const [workingSince, setWorkingSince] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // History rows that existed before the current turn: only rows after them can be that turn.
+  const baselineRef = useRef(0);
   const elapsed = useElapsed(workingSince);
 
   useEffect(() => {
@@ -76,6 +85,7 @@ export default function BotChatScreen() {
   }, [botId]);
 
   // Bot Chat turns go through Hermes' Bot Chat queue: the stream only carries the final event.
+  // Approval requests are not actionable for Bot Chat runs through the API, so they are ignored.
   const handleEvent = useCallback((event: RunEvent) => {
     switch (event.event) {
       case 'run.completed':
@@ -89,39 +99,78 @@ export default function BotChatScreen() {
     }
   }, []);
 
-  /** Reloads the Bot Chat and keeps only pending lines the history doesn't hold yet. */
+  /**
+   * Reloads the Bot Chat. A pending line is dropped once the history holds a new row
+   * (after the baseline) with the same role, so an older identical reply never swallows it.
+   */
   async function reconcile(sessionId: string) {
-    try {
-      const fresh = toLines(await getBotMessages(botId, sessionId));
-      setHistory(fresh);
-      setPending((p) => p.filter((l) => l.role === 'status' || !fresh.some((h) => h.role === l.role && h.text === l.text)));
-    } catch {
-      // Keep what we have; the next visit reloads it.
-    }
+    const fresh = toLines(await getBotMessages(botId, sessionId));
+    const added = fresh.slice(baselineRef.current);
+    const newCount = { user: added.filter((l) => l.role === 'user').length, assistant: added.filter((l) => l.role === 'assistant').length };
+    setHistory(fresh);
+    setPending((p) =>
+      p.filter((l) => {
+        if (l.role === 'status') return true;
+        if (newCount[l.role] > 0) {
+          newCount[l.role]--;
+          return false;
+        }
+        return true;
+      }),
+    );
   }
 
-  async function send() {
-    const text = draft.trim();
-    if (!text || workingSince !== null || state.kind !== 'ready') return;
-    const clientMessageId = Crypto.randomUUID();
+  async function runTurn(sessionId: string, text: string, clientMessageId: string) {
     const controller = new AbortController();
     abortRef.current = controller;
-    setDraft('');
-    setPending((p) => [...p.filter((l) => l.role !== 'status'), { key: `u-${clientMessageId}`, role: 'user', text }]);
+    setNotice(null);
     setWorkingSince(Date.now());
+    let id: string | null = null;
     try {
-      const { runId: id } = await sendBotMessage(botId, clientMessageId, text);
+      ({ runId: id } = await sendBotMessage(botId, clientMessageId, text));
       setRunId(id);
       await followBotRun(botId, id, handleEvent, controller.signal);
     } catch (e) {
       if (!controller.signal.aborted) {
-        setPending((p) => [...p, { key: `e-${clientMessageId}`, role: 'status', text: `Message failed: ${(e as Error).message}` }]);
+        const message = (e as Error).message;
+        // With a runId the turn was admitted and may still complete: offer a refresh, never a resend.
+        setNotice(id ? { kind: 'lost', message } : { kind: 'not-sent', message, clientMessageId, text });
       }
     } finally {
       setRunId(null);
       setWorkingSince(null);
-      if (!controller.signal.aborted) await reconcile(state.sessionId);
     }
+    if (!controller.signal.aborted && id) await reconcile(sessionId).catch(() => {});
+  }
+
+  function send() {
+    const text = draft.trim();
+    if (!text || workingSince !== null || state.kind !== 'ready') return;
+    const clientMessageId = Crypto.randomUUID();
+    baselineRef.current = history.length;
+    setDraft('');
+    setPending((p) => [...p.filter((l) => l.role !== 'status'), { key: `u-${clientMessageId}`, role: 'user', text }]);
+    runTurn(state.sessionId, text, clientMessageId);
+  }
+
+  function resend() {
+    if (notice?.kind !== 'not-sent' || state.kind !== 'ready') return;
+    runTurn(state.sessionId, notice.text, notice.clientMessageId);
+  }
+
+  async function refresh() {
+    if (state.kind !== 'ready') return;
+    try {
+      await reconcile(state.sessionId);
+      setNotice(null);
+    } catch (e) {
+      setNotice({ kind: 'lost', message: (e as Error).message });
+    }
+  }
+
+  function stop(id: string) {
+    setNotice({ kind: 'info', message: 'Stop requested' });
+    stopBotRun(botId, id).catch((e) => setNotice({ kind: 'info', message: `Stop failed: ${(e as Error).message}` }));
   }
 
   const title = name || botId;
@@ -129,8 +178,7 @@ export default function BotChatScreen() {
     <Stack.Screen
       options={{
         title,
-        headerRight: () =>
-          runId ? <Button title="Stop" color="#d33" onPress={() => stopBotRun(botId, runId).catch(() => {})} /> : undefined,
+        headerRight: () => (runId ? <Button title="Stop" color="#d33" onPress={() => stop(runId)} /> : undefined),
       }}
     />
   );
@@ -173,6 +221,19 @@ export default function BotChatScreen() {
           )
         }
       />
+      {notice ? (
+        <View style={[styles.banner, { borderColor: colors.border }]}>
+          <Text style={[styles.bannerText, { color: colors.text }]}>
+            {notice.kind === 'not-sent'
+              ? `Message not sent: ${notice.message}`
+              : notice.kind === 'lost'
+                ? `Lost track of the reply (${notice.message}). It may still arrive: refresh to check the Bot Chat.`
+                : notice.message}
+          </Text>
+          {notice.kind === 'not-sent' ? <Button title="Resend" onPress={resend} disabled={working} /> : null}
+          {notice.kind === 'lost' ? <Button title="Refresh" onPress={refresh} /> : null}
+        </View>
+      ) : null}
       <View style={[styles.composer, { borderColor: colors.border }]}>
         <TextInput
           style={[styles.input, { color: colors.text, borderColor: colors.border }]}
@@ -194,6 +255,8 @@ const styles = StyleSheet.create({
   status: { alignSelf: 'center', opacity: 0.6, fontSize: 13 },
   notice: { flex: 1, padding: 24, justifyContent: 'center' },
   noticeText: { fontSize: 16, textAlign: 'center', lineHeight: 22 },
+  banner: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 6, borderTopWidth: StyleSheet.hairlineWidth },
+  bannerText: { flex: 1, fontSize: 13 },
   composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, padding: 8, borderTopWidth: StyleSheet.hairlineWidth },
   input: { flex: 1, maxHeight: 140, borderWidth: StyleSheet.hairlineWidth, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 8, fontSize: 16 },
 });

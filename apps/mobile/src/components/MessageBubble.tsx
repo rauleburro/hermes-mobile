@@ -12,7 +12,8 @@ export function MessageBubble({ role, text }: { role: MessageRole; text: string 
   const isUser = role === 'user';
   return (
     <View
-      accessibilityLabel={isUser ? 'Your message' : 'Bot message'}
+      accessible
+      accessibilityLabel={`${isUser ? 'You' : 'Bot'}: ${text}`}
       style={[
         styles.bubble,
         isUser

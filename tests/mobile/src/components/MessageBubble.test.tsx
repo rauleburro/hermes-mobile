@@ -6,17 +6,18 @@ jest.mock('expo-router', () => ({
 }));
 
 describe('MessageBubble', () => {
-  it('renders an assistant message, labelled as the Bot', async () => {
+  it('is one accessible element that a screen reader reads as the Bot speaking, with the text', async () => {
     await render(<MessageBubble role="assistant" text="hello" />);
 
+    const bubble = screen.getByLabelText('Bot: hello');
+    expect(bubble).toHaveProp('accessible', true);
     expect(screen.getByText('hello')).toBeOnTheScreen();
-    expect(screen.getByLabelText('Bot message')).toBeOnTheScreen();
   });
 
-  it('renders a user message, labelled as yours', async () => {
+  it('is read as your own message for user lines', async () => {
     await render(<MessageBubble role="user" text="hi" />);
 
-    expect(screen.getByText('hi')).toBeOnTheScreen();
-    expect(screen.getByLabelText('Your message')).toBeOnTheScreen();
+    expect(screen.getByLabelText('You: hi')).toHaveProp('accessible', true);
+    expect(screen.queryByLabelText('Bot: hi')).toBeNull();
   });
 });

@@ -114,7 +114,10 @@ describe('BotChatScreen', () => {
     await render(<BotChatScreen />);
     await send('[e2e] ping');
     await screen.findByText(/Working…/);
+    // A Bot Chat only grows: the reload holds the earlier rows plus the new turn.
     jest.mocked(getBotMessages).mockResolvedValue([
+      { role: 'user', content: 'earlier question' },
+      { role: 'assistant', content: 'earlier answer' },
       { role: 'user', content: '[e2e] ping' },
       { role: 'assistant', content: 'E2E-OK 42' },
     ]);
@@ -122,7 +125,7 @@ describe('BotChatScreen', () => {
     finish({ event: 'run.completed', run_id: 'run-1', timestamp: 1, output: 'E2E-OK 42' });
 
     await waitFor(() => expect(getBotMessages).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.queryByText('earlier answer')).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/Working…/)).toBeNull());
     expect(screen.getAllByText('E2E-OK 42')).toHaveLength(1);
     expect(screen.getAllByText('[e2e] ping')).toHaveLength(1);
   });
@@ -153,7 +156,139 @@ describe('BotChatScreen', () => {
     await render(<BotChatScreen />);
     await send('[e2e] ping');
 
-    expect(await screen.findByText(/Message failed/)).toBeOnTheScreen();
+    expect(await screen.findByText(/Message not sent/)).toBeOnTheScreen();
     expect(screen.getByPlaceholderText('Message Hermes')).toBeEnabled();
+  });
+
+  it('resends a failed message with the same clientMessageId', async () => {
+    jest.mocked(sendBotMessage).mockRejectedValueOnce(new Error('network down'));
+    controllableRun();
+    await render(<BotChatScreen />);
+    await send('[e2e] ping');
+
+    await userEvent.setup().press(await screen.findByRole('button', { name: 'Resend' }));
+
+    expect(sendBotMessage).toHaveBeenCalledTimes(2);
+    expect(jest.mocked(sendBotMessage).mock.calls[1]).toEqual(['default', 'client-msg-1', '[e2e] ping']);
+    expect(screen.getAllByText('[e2e] ping')).toHaveLength(1);
+  });
+
+  it('does not call a turn failed when it only lost track of the reply, and offers a refresh instead of a resend', async () => {
+    jest.mocked(followBotRun).mockRejectedValue(new Error('events failed (502)'));
+    await render(<BotChatScreen />);
+    await send('[e2e] ping');
+
+    expect(await screen.findByText(/Lost track of the reply/)).toBeOnTheScreen();
+    expect(screen.queryByText(/Message not sent/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Resend' })).toBeNull();
+    jest.mocked(getBotMessages).mockResolvedValue([
+      { role: 'user', content: '[e2e] ping' },
+      { role: 'assistant', content: 'late reply' },
+    ]);
+
+    await userEvent.setup().press(screen.getByRole('button', { name: 'Refresh' }));
+
+    expect(await screen.findByText('late reply')).toBeOnTheScreen();
+    expect(screen.queryByText(/Lost track of the reply/)).toBeNull();
+  });
+
+  it('keeps a new reply that repeats an older line until the history really holds it', async () => {
+    jest.mocked(getBotMessages).mockResolvedValue([
+      { role: 'user', content: 'say OK' },
+      { role: 'assistant', content: 'OK' },
+    ]);
+    const finish = controllableRun();
+    await render(<BotChatScreen />);
+    await send('say OK');
+    await screen.findByText(/Working…/);
+
+    // The reload still returns the old history: the new turn isn't persisted yet.
+    finish({ event: 'run.completed', run_id: 'run-1', timestamp: 1, output: 'OK' });
+
+    await waitFor(() => expect(getBotMessages).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText(/Working…/)).toBeNull());
+    expect(screen.getAllByText('OK')).toHaveLength(2);
+    expect(screen.getAllByText('say OK')).toHaveLength(2);
+  });
+
+  it('drops pending lines once the history has the new turn, even if the stored text differs slightly', async () => {
+    const finish = controllableRun();
+    await render(<BotChatScreen />);
+    await send('[e2e] ping');
+    await screen.findByText(/Working…/);
+    jest.mocked(getBotMessages).mockResolvedValue([
+      { role: 'user', content: 'earlier question' },
+      { role: 'assistant', content: 'earlier answer' },
+      { role: 'user', content: '[e2e] ping' },
+      { role: 'assistant', content: 'E2E-OK 42 (stored)' },
+    ]);
+
+    finish({ event: 'run.completed', run_id: 'run-1', timestamp: 1, output: 'E2E-OK 42' });
+
+    expect(await screen.findByText('E2E-OK 42 (stored)')).toBeOnTheScreen();
+    await waitFor(() => expect(screen.queryByText('E2E-OK 42')).toBeNull());
+    expect(screen.getAllByText('[e2e] ping')).toHaveLength(1);
+  });
+
+  it('aborts the stream on unmount without reloading or reporting a failure', async () => {
+    let signal: AbortSignal | undefined;
+    jest.mocked(followBotRun).mockImplementation((_b, _r, _e, s) => {
+      signal = s;
+      return new Promise<void>((resolve) => s.addEventListener('abort', () => resolve()));
+    });
+    await render(<BotChatScreen />);
+    await send('[e2e] ping');
+    await waitFor(() => expect(signal).toBeDefined());
+
+    await screen.unmount();
+
+    expect(signal!.aborted).toBe(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(getBotMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders nothing actionable for an approval request (Bot Chat approvals are not reachable)', async () => {
+    let emit: (e: RunEvent) => void = () => {};
+    jest.mocked(followBotRun).mockImplementation((_b, _r, onEvent) => {
+      emit = onEvent;
+      return new Promise<void>(() => {});
+    });
+    await render(<BotChatScreen />);
+    await send('[e2e] ping');
+    await waitFor(() => expect(followBotRun).toHaveBeenCalled());
+
+    emit({ event: 'approval.request', run_id: 'run-1', timestamp: 1, command: 'rm -rf /tmp/x', choices: ['once', 'deny'] });
+
+    await screen.findByText(/Working…/);
+    expect(screen.queryByText(/rm -rf/)).toBeNull();
+    expect(screen.queryByRole('button', { name: /Allow|Deny/ })).toBeNull();
+  });
+
+  it('shows a generic notice when the Bot Chat cannot be loaded', async () => {
+    jest.mocked(getBotChat).mockRejectedValue(new Error('GET /bots/default/chat failed (502)'));
+    await render(<BotChatScreen />);
+
+    expect(await screen.findByText('Could not load the Bot Chat: GET /bots/default/chat failed (502)')).toBeOnTheScreen();
+  });
+
+  it('says a stop was requested, since Hermes may keep working on the turn', async () => {
+    controllableRun();
+    await render(<BotChatScreen />);
+    await send('[e2e] ping');
+
+    await userEvent.setup().press(await screen.findByRole('button', { name: 'Stop' }));
+
+    expect(await screen.findByText('Stop requested')).toBeOnTheScreen();
+  });
+
+  it('shows why a stop failed', async () => {
+    jest.mocked(stopBotRun).mockRejectedValue(new Error('POST stop failed (502)'));
+    controllableRun();
+    await render(<BotChatScreen />);
+    await send('[e2e] ping');
+
+    await userEvent.setup().press(await screen.findByRole('button', { name: 'Stop' }));
+
+    expect(await screen.findByText('Stop failed: POST stop failed (502)')).toBeOnTheScreen();
   });
 });

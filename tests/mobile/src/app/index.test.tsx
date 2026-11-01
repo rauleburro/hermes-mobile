@@ -1,5 +1,5 @@
 import type { BotSummary, BotsResponse } from '@hermes-mobile/api';
-import { render, screen, userEvent } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, userEvent, waitFor } from '@testing-library/react-native';
 import { router } from 'expo-router';
 import HomeScreen from '@mobile/app/index';
 import { BffError, getBotChat, getBotMessages, listBots } from '@mobile/lib/bff';
@@ -132,6 +132,51 @@ describe('HomeScreen (Bots roster)', () => {
     await render(<HomeScreen />);
 
     expect(await screen.findByText('GET /bots failed (502)')).toBeOnTheScreen();
+  });
+
+  it('gives screen readers the name, title and preview or hint of each Bot', async () => {
+    roster([
+      bot({ id: 'default', name: 'Hermes', title: 'Personal assistant' }),
+      bot({ id: 'researcher', name: 'Deep Researcher', reachable: false }),
+    ]);
+    jest.mocked(getBotMessages).mockResolvedValue([{ role: 'assistant', content: 'pong' }]);
+    await render(<HomeScreen />);
+
+    expect(await screen.findByRole('button', { name: 'Hermes, Personal assistant, pong' })).toBeOnTheScreen();
+    expect(
+      screen.getByRole('button', { name: 'Deep Researcher, Unreachable: the BFF has no API key for this Bot' }),
+    ).toBeDisabled();
+  });
+
+  it('shows why "Check again" failed on the Bot Mode screen', async () => {
+    roster([], false);
+    await render(<HomeScreen />);
+    jest.mocked(listBots).mockRejectedValue(new Error('GET /bots failed (502)'));
+
+    await userEvent.setup().press(await screen.findByRole('button', { name: 'Check again' }));
+
+    expect(await screen.findByText('GET /bots failed (502)')).toBeOnTheScreen();
+    expect(screen.getByText('Bot Mode is not enabled')).toBeOnTheScreen();
+  });
+
+  it('ignores previews from an earlier refresh that arrive late', async () => {
+    roster([bot({ id: 'default', name: 'Hermes' })]);
+    let resolveOld: (v: { role: 'assistant'; content: string }[]) => void = () => {};
+    jest
+      .mocked(getBotMessages)
+      .mockImplementationOnce(() => new Promise((r) => (resolveOld = r)))
+      .mockResolvedValueOnce([{ role: 'assistant', content: 'new preview' }]);
+    await render(<HomeScreen />);
+    await screen.findByText('Hermes');
+    await waitFor(() => expect(getBotMessages).toHaveBeenCalledTimes(1));
+
+    await fireEvent(screen.getByTestId('roster'), 'refresh');
+    expect(await screen.findByText('new preview')).toBeOnTheScreen();
+
+    await act(async () => resolveOld([{ role: 'assistant', content: 'old preview' }]));
+
+    expect(screen.queryByText('old preview')).toBeNull();
+    expect(screen.getByText('new preview')).toBeOnTheScreen();
   });
 
   it('never offers to create a session', async () => {

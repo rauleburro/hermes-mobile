@@ -2,7 +2,7 @@ import { useTheme } from 'expo-router';
 import { Button, StyleSheet, Text, View } from 'react-native';
 
 /** Shown when Hermes has no Bots: the app is a Bots client and never creates loose sessions. */
-export function BotModeDisabled({ onRetry }: { onRetry: () => void }) {
+export function BotModeDisabled({ onRetry, error }: { onRetry: () => void; error?: string | null }) {
   const { colors } = useTheme();
   const text = { color: colors.text };
   return (
@@ -15,6 +15,7 @@ export function BotModeDisabled({ onRetry }: { onRetry: () => void }) {
       <Text style={[styles.step, text]}>2. Go to the Bots tab and create a Bot (or enable Bot Mode).</Text>
       <Text style={[styles.step, text]}>3. Open the Bot once there so its Bot Chat exists.</Text>
       <Text style={[styles.body, text]}>Then come back and check again.</Text>
+      {error ? <Text style={[styles.body, { color: colors.notification }]}>{error}</Text> : null}
       <Button title="Check again" onPress={onRetry} />
     </View>
   );

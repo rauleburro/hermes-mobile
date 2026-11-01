@@ -1,7 +1,7 @@
 import type { BotSummary, BotsResponse } from '@hermes-mobile/api';
 import { router, Stack, useFocusEffect, useTheme } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Button, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useRef, useState } from 'react';
+import { Button, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { BotAvatar } from '@/components/BotAvatar';
 import { BotModeDisabled } from '@/components/BotModeDisabled';
 import { BffError, getBotChat, getBotMessages, listBots } from '@/lib/bff';
@@ -26,21 +26,29 @@ export default function HomeScreen() {
   const [previews, setPreviews] = useState<Record<string, string | undefined>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Each refresh bumps this; previews from an older refresh are dropped when they land.
+  const generation = useRef(0);
 
   const refresh = useCallback(async () => {
     if (!(await loadConfig())) {
       router.push('/pair');
       return;
     }
+    const current = ++generation.current;
     setLoading(true);
     try {
       const next = await listBots();
+      if (current !== generation.current) return;
       setRoster(next);
       setError(null);
       // Previews fill in after the roster renders; one failing Bot never blanks the list.
       next.bots
         .filter((b) => b.reachable)
-        .forEach((b) => loadPreview(b.id).then((p) => setPreviews((prev) => ({ ...prev, [b.id]: p }))));
+        .forEach((b) =>
+          loadPreview(b.id).then((p) => {
+            if (current === generation.current) setPreviews((prev) => ({ ...prev, [b.id]: p }));
+          }),
+        );
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -62,7 +70,7 @@ export default function HomeScreen() {
     return (
       <>
         {header}
-        <BotModeDisabled onRetry={refresh} />
+        <BotModeDisabled onRetry={refresh} error={error} />
       </>
     );
   }
@@ -72,7 +80,7 @@ export default function HomeScreen() {
     return (
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={item.name}
+        accessibilityLabel={[item.name, item.title, subtitle].filter(Boolean).join(', ')}
         disabled={!item.reachable}
         onPress={() => router.push({ pathname: '/bot/[botId]', params: { botId: item.id, name: item.name } })}
         style={({ pressed }) => [
@@ -103,9 +111,11 @@ export default function HomeScreen() {
     <>
       {header}
       <FlatList
+        testID="roster"
         data={roster?.bots ?? []}
         keyExtractor={(b) => b.id}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} />}
+        refreshing={loading}
+        onRefresh={refresh}
         ListHeaderComponent={error ? <Text style={[styles.error, { color: colors.notification }]}>{error}</Text> : undefined}
         ListEmptyComponent={
           roster && !error ? (
