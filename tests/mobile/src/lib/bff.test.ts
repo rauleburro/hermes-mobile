@@ -8,9 +8,11 @@ import {
   getBotChatMessages,
   getBotMessages,
   listBots,
+  REQUEST_TIMEOUT_MS,
   sendBotMessage,
   stopBotRun,
 } from '@mobile/lib/bff';
+import { savedDataHint } from '@mobile/lib/cache';
 import { loadConfig } from '@mobile/lib/config';
 
 // bff.ts takes its streaming fetch from expo/fetch; these tests only use the global fetch path.
@@ -106,6 +108,59 @@ describe('Bot client', () => {
 
     await getBotChatMessages('default');
     expect(fetchMock.mock.calls[0][0]).toBe('http://bff.local:8787/bots/default/chat/messages');
+  });
+});
+
+describe('request timeout', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.mocked(loadConfig).mockResolvedValue(config);
+  });
+  afterEach(() => jest.useRealTimers());
+
+  /** A fetch that never answers (a hung socket); like RN's fetch, it rejects once its signal aborts. */
+  const hang = (honorAbort = true) =>
+    fetchMock.mockImplementation(
+      (_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          if (honorAbort) init.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+        }),
+    );
+
+  it('gives up on a BFF request after ~15 s with a network-type error (no HTTP status)', async () => {
+    hang();
+    const result = listBots().catch((e: unknown) => e);
+    let settled = false;
+    result.then(() => (settled = true));
+
+    expect(REQUEST_TIMEOUT_MS).toBe(15_000);
+    await jest.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS - 1);
+    expect(settled).toBe(false);
+    await jest.advanceTimersByTimeAsync(1);
+
+    const error = await result;
+    expect(error).toBeInstanceOf(BffError);
+    expect(error).toMatchObject({ status: undefined, code: 'timeout', message: 'GET /bots timed out' });
+    expect((fetchMock.mock.calls[0][1] as RequestInit).signal?.aborted).toBe(true);
+    // So the saved-data hint and Retry treat it like any unreachable BFF.
+    expect(savedDataHint(error, 'messages')).toBe('Offline · showing saved messages');
+  });
+
+  it('times out even if the fetch ignores the abort', async () => {
+    hang(false);
+    const result = getBotChat('default').catch((e: unknown) => e);
+
+    await jest.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+
+    await expect(result).resolves.toMatchObject({ code: 'timeout' });
+  });
+
+  it('leaves no timer behind once the BFF answers', async () => {
+    respond(200, { botModeEnabled: true, bots: [] });
+
+    await listBots();
+
+    expect(jest.getTimerCount()).toBe(0);
   });
 });
 

@@ -31,18 +31,52 @@ async function requireConfig(): Promise<BffConfig> {
   return config;
 }
 
+/**
+ * How long a BFF request may take, body included. React Native's fetch has no timeout of its own
+ * (Android's OkHttp client is built without one), so a request on a half-open socket would hang.
+ */
+export const REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * Runs `work` with an AbortSignal that aborts after `ms`, and rejects with `onTimeout()` then even
+ * if `work` ignores the signal. The timer is cleared as soon as `work` settles.
+ */
+function withTimeout<T>(ms: number, work: (signal: AbortSignal) => Promise<T>, onTimeout: () => Error): Promise<T> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(onTimeout());
+    }, ms);
+  });
+  return Promise.race([work(controller.signal), timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * A timeout throws a BffError with code `timeout` and no HTTP status: like a network failure,
+ * it reads as "Offline" next to saved data and is retried as transient.
+ */
 async function request<T>(path: string, init: RequestInit = {}, config?: BffConfig): Promise<T> {
   const { url, token } = config ?? (await requireConfig());
-  const res = await fetch(`${url}${path}`, {
-    ...init,
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...init.headers },
-  });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
-    const code = typeof body?.error === 'string' ? body.error : undefined;
-    throw new BffError(`${init.method ?? 'GET'} ${path} failed (${res.status})`, res.status, code);
-  }
-  return (await res.json()) as T;
+  const method = init.method ?? 'GET';
+  return withTimeout(
+    REQUEST_TIMEOUT_MS,
+    async (signal) => {
+      const res = await fetch(`${url}${path}`, {
+        ...init,
+        signal,
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...init.headers },
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+        const code = typeof body?.error === 'string' ? body.error : undefined;
+        throw new BffError(`${method} ${path} failed (${res.status})`, res.status, code);
+      }
+      return (await res.json()) as T;
+    },
+    () => new BffError(`${method} ${path} timed out`, undefined, 'timeout'),
+  );
 }
 
 export const checkHealth = (config: BffConfig) => request<HealthResponse>('/health', {}, config);
