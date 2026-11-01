@@ -391,6 +391,20 @@ describe('PairScreen on the local network (Android 17 Nearby devices)', () => {
     expect(router.replace).not.toHaveBeenCalled();
   });
 
+  it('drops the denied Nearby devices hint once the BFF answered, even if saving the pairing then fails', async () => {
+    mockedEnsureAccess.mockResolvedValue('denied');
+    mockedCheckHealth.mockResolvedValue({ ok: true, hermes: true });
+    mockedSaveConfig.mockRejectedValue(new Error("Calling the 'setValueWithKeyAsync' function has failed"));
+    await render(<PairScreen />);
+
+    const user = await fillForm('http://192.168.1.10:8787', 'secret');
+    await user.press(screen.getByRole('button', { name: 'Pair' }));
+
+    expect(await screen.findByText(/Could not save the pairing on this device/)).toBeOnTheScreen();
+    expect(screen.queryByText(LOCAL_NETWORK_HINT)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open settings' })).toBeNull();
+  });
+
   it('shows no hint or settings button when the failure is not about the local network', async () => {
     mockedCheckHealth.mockRejectedValue(new Error('GET /health failed (500)'));
     await render(<PairScreen />);

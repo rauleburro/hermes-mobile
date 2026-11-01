@@ -91,6 +91,7 @@ export default function PairScreen() {
         setNetworkHint(localNetworkHint(normalized, error, { granted: access === 'granted' }));
         return;
       }
+      setNetworkHint(null); // The BFF answered: the local network isn't blocked.
       try {
         await saveConfig(config);
       } catch (error) {
