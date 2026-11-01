@@ -1,0 +1,21 @@
+# Local git hooks (installed by `pnpm install` through the `prepare` script).
+# Skip them for one command with LEFTHOOK=0, e.g. `LEFTHOOK=0 git push`.
+# Full gate: `pnpm validate` (test, typecheck, lint, hygiene, then stamps HEAD).
+
+pre-commit:
+  commands:
+    hygiene:
+      run: node scripts/hygiene.mjs
+    lint:
+      # ~1s; only when app code is part of the commit.
+      glob: "apps/mobile/**/*.{ts,tsx,js,jsx}"
+      run: pnpm lint
+
+# Blocks a push whose commits were not validated. git feeds the refs being
+# pushed on stdin; use_stdin passes them to the script, which checks each
+# pushed sha (not HEAD) for a current Validated-tree receipt.
+pre-push:
+  commands:
+    receipt:
+      use_stdin: true
+      run: node scripts/receipt.mjs pre-push
