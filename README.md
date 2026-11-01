@@ -50,8 +50,13 @@ Every change is test-first (TDD): write a failing test, make it pass with the mi
 ```
 pnpm test        # all test suites
 pnpm typecheck
-cd apps/mobile && npx expo lint
+pnpm lint
+pnpm hygiene     # no personal paths, tracked .env files, keys or tokens
 ```
+
+Before opening a PR, commit your work and run `pnpm validate`: it runs all of the above and, only if everything passes, stamps the HEAD commit with a `Validated-tree: <hash>` trailer. The pre-push hook (installed by `pnpm install` through [lefthook](https://lefthook.dev); skip once with `LEFTHOOK=0`) refuses to push a commit whose stamp is missing or stale, so any change after validating means validating again. The pre-commit hook runs the hygiene check (and lint when app code changed).
+
+The hygiene check scans tracked files only. A line that legitimately mentions something it would flag (for example documentation about what not to commit) can carry the marker `hygiene-allow` to be skipped.
 
 ## Testing
 
