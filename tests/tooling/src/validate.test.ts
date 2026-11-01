@@ -97,6 +97,20 @@ describe("runValidate in a throwaway repo", () => {
     expect(result.ok).toBe(false);
     expect(check(repo).ok).toBe(false);
   });
+
+  it("does not stamp if HEAD moved to a different tree during the steps", () => {
+    const committing = {
+      name: "commit-elsewhere",
+      command: "sh",
+      args: ["-c", "echo x > b.txt && git add b.txt && git commit -q -m moved"],
+    };
+    const result = run([committing]);
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/HEAD changed/);
+    expect(result.message).toContain("pnpm validate");
+    expect(git(repo, ["log", "-1", "--format=%s"]).trim()).toBe("moved");
+    expect(check(repo).ok).toBe(false);
+  });
 });
 
 describe("DEFAULT_STEPS", () => {

@@ -129,6 +129,17 @@ describe("receipt in a throwaway repo", () => {
     expect(() => stamp(repo)).toThrow(/receipt|check/i);
   });
 
+  it("stamp refuses when HEAD's tree is not the expected one", () => {
+    const before = git(repo, "rev-parse", "HEAD");
+    expect(() => stamp(repo, SHA)).toThrow(/HEAD changed/);
+    expect(git(repo, "rev-parse", "HEAD")).toBe(before);
+  });
+
+  it("stamp accepts the expected tree", () => {
+    stamp(repo, git(repo, "rev-parse", "HEAD^{tree}"));
+    expect(check(repo).ok).toBe(true);
+  });
+
   it("a new commit after stamp is not validated", () => {
     stamp(repo);
     commitFile(repo, "b.txt", "x\n", "later");

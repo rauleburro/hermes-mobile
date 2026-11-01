@@ -43,10 +43,13 @@ export function readTrailer(message) {
 
 /**
  * Amend HEAD's message with the current tree hash. The tree is untouched.
+ * With `expectedTree` (the tree that was validated), refuses if HEAD's tree is
+ * no longer that one, e.g. a commit or switch happened while the steps ran.
  * @param {string} cwd
+ * @param {string} [expectedTree]
  * @returns {string} the stamped tree hash
  */
-export function stamp(cwd) {
+export function stamp(cwd, expectedTree) {
   const dirty = git(cwd, ["status", "--porcelain", "--untracked-files=no"]).trim();
   if (dirty) {
     throw new Error(
@@ -54,6 +57,11 @@ export function stamp(cwd) {
     );
   }
   const tree = git(cwd, ["rev-parse", "HEAD^{tree}"]).trim();
+  if (expectedTree !== undefined && tree !== expectedTree) {
+    throw new Error(
+      "Refusing to stamp: HEAD changed during validation, so HEAD is not the code that was validated. Run `pnpm validate` again.",
+    );
+  }
   const message = git(cwd, ["log", "-1", "--format=%B", "HEAD"]);
   const stamped = git(
     cwd,
