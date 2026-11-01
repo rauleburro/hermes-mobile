@@ -110,6 +110,15 @@ describe('localNetworkHint', () => {
     expect(localNetworkHint('http://bff.local:8787', expoFetchError, { env: android17 })).toMatch(/Nearby devices/);
   });
 
+  it('also after the exact error a Pixel on Android 17 gives for an unresolvable .local host', () => {
+    const onDevice = new Error(
+      'fetch failed: java.net.UnknownHostException: Unable to resolve host "no-such-bff.local": No address associated with hostname',
+    );
+
+    expect(localNetworkHint('http://no-such-bff.local:8787', onDevice, { env: android17 })).toBe(LOCAL_NETWORK_HINT);
+    expect(localNetworkHint('http://no-such-bff.local:8787', onDevice, { env: android17, granted: true })).toBeNull();
+  });
+
   it("also after React Native's own fetch timeout", () => {
     expect(localNetworkHint('http://192.168.1.10:8787', new TypeError('Network request timed out'), { env: android17 })).toMatch(/Nearby devices/);
   });
