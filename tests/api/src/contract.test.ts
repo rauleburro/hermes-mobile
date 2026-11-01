@@ -53,7 +53,6 @@ describe('run events', () => {
   it('covers the events Hermes emits on /v1/runs', () => {
     expectTypeOf<RunEvent['event']>().toEqualTypeOf<
       | 'run.queued'
-      | 'run.stopping'
       | 'message.delta'
       | 'message.interim'
       | 'tool.started'
@@ -80,14 +79,17 @@ describe('run events', () => {
     const started: RunEvent = { event: 'run.started', run_id: 'r', timestamp: 0 };
     // @ts-expect-error a failed tool arrives as tool.completed with error: true
     const failed: RunEvent = { event: 'tool.failed', run_id: 'r', timestamp: 0, tool: 't', duration: 1, error: true };
-    expect([started, failed]).toHaveLength(2);
+    // @ts-expect-error run.stopping is only the status record's last_event, never a stream event
+    const stopping: RunEvent = { event: 'run.stopping', run_id: 'r', timestamp: 0 };
+    expect([started, failed, stopping]).toHaveLength(3);
   });
 
   it('exposes the approval prompt id and execution generation', () => {
     expectTypeOf<EventOf<'approval.request'>['prompt_id']>().toEqualTypeOf<string>();
     expectTypeOf<EventOf<'approval.request'>['execution_generation']>().toEqualTypeOf<number>();
     expectTypeOf<EventOf<'approval.request'>['choices']>().toEqualTypeOf<ApprovalChoice[]>();
-    // 0.22.5 always sends prompt_id; the legacy request_id is not modelled.
+    // The session-authority branch (a 0.22.5 gateway) sends prompt_id; the legacy branch's
+    // request_id is not modelled, so this holds for the authority branch only.
     expectTypeOf<'request_id' extends keyof EventOf<'approval.request'> ? true : false>().toEqualTypeOf<false>();
   });
 

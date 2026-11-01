@@ -71,7 +71,11 @@ export type RunStatus =
   | 'failed'
   | 'cancelled'
   | 'interrupted'
-  /** Hermes lost track of the run (e.g. after a restart). Not terminal: the run may still finish. */
+  /**
+   * A lost owner epoch (e.g. the gateway restarted mid-run). Not terminal; needs resolve-unknown:
+   * it won't finish by itself and blocks the session's later turns until
+   * `POST /v1/runs/{id}/resolve-unknown`.
+   */
   | 'unknown';
 
 export const TERMINAL_STATUSES: ReadonlySet<RunStatus> = new Set<RunStatus>([
@@ -122,12 +126,17 @@ type TerminalFields = {
 };
 
 /**
- * Events on GET /v1/runs/{id}/events (Hermes 0.22.5). `run.started` and `tool.failed`
- * are not emitted on this endpoint: a failed tool arrives as `tool.completed` with `error: true`.
+ * Events on GET /v1/runs/{id}/events (Hermes 0.22.5). `run.started`, `tool.failed` and
+ * `run.stopping` are not emitted on this endpoint: a failed tool arrives as `tool.completed`
+ * with `error: true`, and `run.stopping` is only the status record's `last_event`.
+ *
+ * Legacy branch only: `message.interim`, `reasoning.available`, `subagent.start`,
+ * `subagent.complete` and `approval.responded` come from the non-admission branch of Hermes'
+ * run executor, which a 0.22.5 gateway with session authority doesn't take. They are kept for
+ * gateways without session authority.
  */
 export type RunEvent =
   | (EventBase & { event: 'run.queued'; message?: string })
-  | (EventBase & { event: 'run.stopping' })
   | (EventBase & { event: 'message.delta'; delta: string })
   | (EventBase & { event: 'message.interim'; text: string; already_streamed: boolean })
   | (EventBase & { event: 'tool.started'; tool: string; preview: string; tool_call_id?: string })
