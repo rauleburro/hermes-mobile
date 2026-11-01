@@ -8,6 +8,13 @@
     "pair": "pnpm --filter @hermes-mobile/bff pair",
     "mobile": "pnpm --filter @hermes-mobile/mobile start",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test"
+    "test": "pnpm -r test",
+    "lint": "pnpm --filter @hermes-mobile/mobile lint",
+    "hygiene": "node scripts/hygiene.mjs",
+    "validate": "node scripts/validate.mjs",
+    "prepare": "lefthook install"
+  },
+  "devDependencies": {
+    "lefthook": "^2.2.2"
   }
 }
