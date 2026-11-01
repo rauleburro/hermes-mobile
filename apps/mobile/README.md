@@ -6,14 +6,14 @@ The Expo app (SDK 58, expo-router). See the [root README](../../README.md) for s
 pnpm mobile              # from the repo root: start Metro for the development build
 npx expo lint            # lint
 npx tsc --noEmit         # typecheck
-npx expo run:android     # build and install the development build (needed for the hermesmobile:// QR link)
+npx expo run:android     # build and install the development build (needed for the pairing QR link, `hermesmobile://` by default)
 ```
 
 Routes live in `src/app/`. Install native packages with `npx expo install`. Agent rules for this package are in [AGENTS.md](AGENTS.md).
 
 ## Run on an Android phone
 
-The app runs as a **development build**: a debug APK with [`expo-dev-client`](https://docs.expo.dev/versions/v58.0.0/sdk/dev-client/) that loads its JavaScript from Metro on your computer. Expo Go is not supported, because the pairing QR code uses the app's own `hermesmobile://` scheme.
+The app runs as a **development build**: a debug APK with [`expo-dev-client`](https://docs.expo.dev/versions/v58.0.0/sdk/dev-client/) that loads its JavaScript from Metro on your computer. Expo Go is not supported, because the pairing QR code uses the app's own URL scheme (`hermesmobile://` unless a fork sets `APP_SCHEME`).
 
 ### Prerequisites
 
@@ -29,7 +29,7 @@ cd apps/mobile
 npx expo run:android
 ```
 
-The first run generates `android/` (gitignored, never edited by hand), builds the debug APK (several minutes the first time), installs it on the phone and starts Metro on port 8081. Add `--port <port>` to use another Metro port. Rebuild only when native dependencies or `app.json` change; JavaScript changes just need Metro.
+The first run generates `android/` (gitignored, never edited by hand), builds the debug APK (several minutes the first time), installs it on the phone and starts Metro on port 8081. Add `--port <port>` to use another Metro port. Rebuild only when native dependencies, `app.json`, `app.config.ts` or the `APP_*` identifiers change; JavaScript changes just need Metro.
 
 On the first launch Android may ask to let Hermes find nearby devices (the development build uses it to discover Metro on the LAN); it is not needed with `adb reverse`. The Expo developer menu also opens once on the first load; close it.
 
@@ -49,9 +49,11 @@ adb shell am start -a android.intent.action.VIEW \
   -d 'exp+hermes-mobile://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081'
 ```
 
+(In a fork, set the `APP_*` identifiers in `apps/mobile/.env.local`; the development-client scheme follows `APP_SLUG`: `exp+<slug>://`.)
+
 ### Pair with the BFF
 
-`pnpm pair` (in the repo root) prints the BFF URL, the device token, the pairing link `hermesmobile://pair?url=…&token=…` and the same link as a QR code. **Scan the QR code with the phone camera**: it opens the pair screen with the URL and token filled in; check them and tap **Pair**. The app checks `GET /health` on the BFF, stores the pairing in secure storage and goes to the home screen. If the app was already paired, the screen says which BFF the new pairing replaces. A link without a token never reuses the stored token for a different BFF: type the token, or use a link that carries it.
+`pnpm pair` (in the repo root) prints the BFF URL, the device token, the pairing link `hermesmobile://pair?url=…&token=…` (your `APP_SCHEME` in a fork) and the same link as a QR code. **Scan the QR code with the phone camera**: it opens the pair screen with the URL and token filled in; check them and tap **Pair**. The app checks `GET /health` on the BFF, stores the pairing in secure storage and goes to the home screen. If the app was already paired, the screen says which BFF the new pairing replaces. A link without a token never reuses the stored token for a different BFF: type the token, or use a link that carries it.
 
 How the phone reaches the BFF:
 
@@ -84,4 +86,4 @@ Without a link, open the pair screen from **Pair** on the home screen and type t
 - **"Could not reach the BFF"** on Pair: from the phone's point of view the URL must work. With USB, check `adb reverse --list` includes the BFF port; on the LAN, check `BFF_HOST` is not `127.0.0.1` and the firewall allows the port. `curl http://localhost:<bff-port>/health` on the computer should return `{"ok":true,...}`.
 - **Requests to a LAN BFF time out after 15 s, and Metro hangs for about 2 minutes, then fails (Android 17)**: Android 17 blocks the local network (private addresses such as `192.168.x.x`, `10.x.x.x`, and `.local` names) for apps without the **Nearby devices** permission (`ACCESS_LOCAL_NETWORK`). Development builds ask for it at launch, and the app asks again before pairing to a local address. If it was denied, allow it in *Settings > Apps > (the app) > Permissions > Nearby devices*, or tap *Open settings* under the error. USB with `adb reverse` (`localhost`) is not affected.
 - **The pairing link opens the launcher instead of the pair screen**: the app was closed, so the development build doesn't know which Metro to load. Tap your server under *Recently opened* (the link is delivered once the bundle loads), or load Metro first (above) and open the link again.
-- **Start over**: `adb shell pm clear dev.rauleburro.hermesmobile` wipes the pairing and the development build's recent servers.
+- **Start over**: `adb shell pm clear dev.rauleburro.hermesmobile` (your `APP_ANDROID_PACKAGE` in a fork) wipes the pairing and the development build's recent servers.

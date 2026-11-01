@@ -6,7 +6,7 @@ import { type BffConfig, loadConfig, saveConfig } from '@/lib/config';
 import { ensureLocalNetworkAccess, LOCAL_NETWORK_HINT, localNetworkHint } from '@/lib/localNetwork';
 import { normalizeBffUrl, parsePairParams } from '@/lib/pairing';
 
-// Reached manually or via hermesmobile://pair?url=…&token=… (the QR printed by `pnpm pair`).
+// Reached manually or via <scheme>://pair (hermesmobile unless the build sets APP_SCHEME)?url=…&token=… (the QR printed by `pnpm pair`).
 // The link only prefills the form: nothing is stored until the user taps Pair.
 export default function PairScreen() {
   const params = useLocalSearchParams<{ url?: string | string[]; token?: string | string[] }>();

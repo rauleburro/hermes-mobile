@@ -14,7 +14,7 @@ packages/api     Shared TypeScript types (app ⇄ BFF, Hermes run events)
 
 - **Stock Hermes.** Nothing is installed into or changed in Hermes: no patches, plugins, skills or hooks. The project only uses Hermes' public API, read-only reads of documented files (`profile.yaml`), and the documented `API_SERVER_*` settings. Anything missing is worked around in the BFF or the app.
 - **Bot Mode.** The app is a roster of Bots (Hermes profiles managed by Bot Mode), and each Bot has its canonical `Bot Chat`. There are no loose sessions.
-- **The Hermes key never reaches the phone.** Only the BFF holds `API_SERVER_KEY`; the phone gets its own device token.
+- **The Hermes key never reaches the phone.** Only the BFF holds the Hermes API key (`HERMES_API_KEY` in its `.env`, a copy of Hermes' `API_SERVER_KEY`, plus any `HERMES_PROFILE_KEY_*` for other Bots); the phone gets its own device token.
 
 ## Setup
 
@@ -39,13 +39,38 @@ Requires Node 24 (`nvm use`), pnpm and a running Hermes Agent with Bot Mode enab
 
 ## Building your own version
 
-You are welcome to build and publish your own build. Change the app identifiers in `apps/mobile/app.json` (`ios.bundleIdentifier`, `android.package`, `scheme`) so your build doesn't collide with ours.
+You are welcome to build and publish your own build. The app identifiers come from environment variables, so a fork changes them without editing any tracked file:
+
+| Variable | What | Default |
+|---|---|---|
+| `APP_NAME` | Display name | `Hermes` |
+| `APP_SLUG` | Expo slug (lowercase letters, digits, `-`) | `hermes-mobile` |
+| `APP_SCHEME` | URL scheme of the pairing link | `hermesmobile` |
+| `APP_BUNDLE_ID` | iOS bundle identifier | `dev.rauleburro.hermesmobile` |
+| `APP_ANDROID_PACKAGE` | Android application id | `dev.rauleburro.hermesmobile` |
+
+**Local builds:** put them in `apps/mobile/.env.local` (never committed: the repo ignores it). The Expo CLI loads that file for every command that evaluates the config (`npx expo run:android`, `pnpm mobile`, `npx expo config`), so Metro and the native build always agree:
+
+```
+# apps/mobile/.env.local
+APP_NAME=My Bots
+APP_SLUG=my-bots
+APP_SCHEME=mybots
+APP_BUNDLE_ID=com.example.mybots
+APP_ANDROID_PACKAGE=com.example.mybots
+```
+
+Check the result with `cd apps/mobile && npx expo config --type public`. Exporting the same variables in the shell also works, as long as every command that evaluates the config sees them.
+
+**EAS builds:** cloud workers don't see your local shell or `.env.local`. Set the variables in the `env` block of the build profile in your `eas.json`, or as EAS environment variables.
+
+Invalid values (a scheme that is not a lowercase URI scheme, an id that is not reverse-DNS) fail loudly at config time. Blank values count as unset. If you change `APP_SCHEME`, put the same value in `services/bff/.env` (or export it when running `pnpm pair`) so the pairing links match. Use your own identifiers consistently across builds: Android treats a different package as a different app, and changing identifiers needs a native rebuild.
 
 We build and publish our own release from this same public source, so anyone can audit what it runs.
 
 ## Contributing
 
-Every change is test-first (TDD): write a failing test, make it pass with the minimum code, refactor with the tests green. Bug fixes included.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the rules and [SECURITY.md](SECURITY.md) to report a vulnerability. In short, every change is test-first (TDD): write a failing test, make it pass with the minimum code, refactor with the tests green. Bug fixes included.
 
 ```
 pnpm test        # all test suites
@@ -79,6 +104,10 @@ Tests live under `tests/<area>`, not next to the code they test:
 Why mobile tests are not inside `apps/mobile`: expo-router turns every file under `apps/mobile/src/app` into a route, so a test file there would ship as a screen. A separate package avoids that and keeps the app free of test tooling.
 
 Run everything with `pnpm test` from the repo root, or one suite with `pnpm --filter @hermes-mobile/mobile-tests test` (`@hermes-mobile/bff` for the BFF). To add a suite for another area, create `tests/<name>` as a workspace package with its own `test` and `typecheck` scripts.
+
+## Branding
+
+Hermes Mobile is an unofficial client for Hermes Agent, not affiliated with Nous Research.
 
 ## License
 

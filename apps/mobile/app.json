@@ -1,15 +1,11 @@
 {
   "expo": {
-    "name": "Hermes",
-    "slug": "hermes-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "hermesmobile",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon",
-      "bundleIdentifier": "dev.rauleburro.hermesmobile"
+      "icon": "./assets/expo.icon"
     },
     "android": {
       "adaptiveIcon": {
@@ -18,8 +14,7 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false,
-      "package": "dev.rauleburro.hermesmobile"
+      "predictiveBackGestureEnabled": false
     },
     "web": {
       "output": "server",
