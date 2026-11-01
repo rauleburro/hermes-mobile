@@ -12,13 +12,18 @@ import {
   stopBotRun,
 } from '@mobile/lib/bff';
 import { buildChatItems } from '@mobile/lib/chatItems';
+import { placeholderColor } from '@mobile/lib/theme';
 import { TURN_POLL_MAX_INTERVAL_MS, TURN_POLL_MAX_MS, TURN_POLL_MS } from '@mobile/lib/useTurnPolling';
 
+let mockTheme = {
+  dark: false,
+  colors: { text: 'black', border: 'gray', notification: 'red', card: 'white', primary: 'blue', background: 'white' },
+};
 jest.mock('expo-router', () => ({
   // Render the header's Stop button so tests can press it.
   Stack: { Screen: ({ options }: { options?: { headerRight?: () => unknown } }) => options?.headerRight?.() ?? null },
   useLocalSearchParams: () => ({ botId: 'default', name: 'Hermes' }),
-  useTheme: () => ({ colors: { text: 'black', border: 'gray', notification: 'red', card: 'white', primary: 'blue' } }),
+  useTheme: () => mockTheme,
   // Always focused here; focus and blur handling is covered by the useTurnPolling tests.
   useFocusEffect: (effect: () => void | (() => void)) => jest.requireActual<typeof import('react')>('react').useEffect(effect, [effect]),
 }));
@@ -718,5 +723,14 @@ describe('BotChatScreen tool cards', () => {
       expect(screen.getByText('Working… 1s')).toBeOnTheScreen();
       expect(buildChatItems).toHaveBeenCalledTimes(before);
     });
+  });
+});
+
+describe('BotChatScreen composer', () => {
+  it.each([false, true])('themes the placeholder color (dark: %s)', async (dark) => {
+    mockTheme = { ...mockTheme, dark };
+    await render(<BotChatScreen />);
+
+    expect(await screen.findByPlaceholderText('Message Hermes')).toHaveProp('placeholderTextColor', placeholderColor({ dark }));
   });
 });

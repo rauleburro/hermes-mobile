@@ -19,6 +19,7 @@ import { BffError, followBotRun, getBotChat, getBotMessages, sendBotMessage, sto
 import { dropChat, readChat, savedDataHint, writeChat } from '@/lib/cache';
 import { buildChatItems, isFinalAnswer, maxRowId, mergeRows, type ChatItem } from '@/lib/chatItems';
 import { loadConfig, pairedUrl } from '@/lib/config';
+import { placeholderColor } from '@/lib/theme';
 import { useTurnPolling } from '@/lib/useTurnPolling';
 
 type Line = { key: string; role: MessageRole | 'status'; text: string };
@@ -111,7 +112,8 @@ function useElapsed(since: number | null) {
 
 export default function BotChatScreen() {
   const { botId, name } = useLocalSearchParams<{ botId: string; name?: string }>();
-  const { colors } = useTheme();
+  const theme = useTheme();
+  const { colors } = theme;
   // First paint comes from the paired BFF's saved copy (synchronous), then the BFF replaces it.
   // The saved copy is text only, so tool cards only ever come from the BFF.
   const [saved] = useState(() => readChat(pairedUrl(), botId));
@@ -435,6 +437,7 @@ export default function BotChatScreen() {
           value={draft}
           onChangeText={setDraft}
           placeholder={`Message ${title}`}
+          placeholderTextColor={placeholderColor(theme)}
           multiline
           editable={!working}
         />
