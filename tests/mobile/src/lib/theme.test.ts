@@ -24,8 +24,9 @@ describe('placeholderColor', () => {
     ['dark', DarkTheme],
   ])('is readable on the %s background, and dimmer than the text', (_name, theme) => {
     const color = placeholderColor(theme);
-    expect(contrast(color, theme.colors.background)).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(color, theme.colors.background)).toBeLessThan(contrast(theme.colors.text, theme.colors.background));
+    const background = String(theme.colors.background);
+    expect(contrast(color, background)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(color, background)).toBeLessThan(contrast(String(theme.colors.text), background));
   });
 
   it('differs between light and dark themes', () => {

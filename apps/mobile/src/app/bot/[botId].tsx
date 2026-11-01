@@ -1,13 +1,13 @@
 import type { RunEvent, SessionMessage } from '@hermes-mobile/api';
 import * as Crypto from 'expo-crypto';
 import { Stack, useLocalSearchParams, useTheme } from 'expo-router';
+import { useHeaderHeight } from 'expo-router/react-navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppState,
   Button,
   FlatList,
   KeyboardAvoidingView,
-  Platform,
   StyleSheet,
   Text,
   TextInput,
@@ -114,6 +114,7 @@ export default function BotChatScreen() {
   const { botId, name } = useLocalSearchParams<{ botId: string; name?: string }>();
   const theme = useTheme();
   const { colors } = theme;
+  const headerHeight = useHeaderHeight();
   // First paint comes from the paired BFF's saved copy (synchronous), then the BFF replaces it.
   // The saved copy is text only, so tool cards only ever come from the BFF.
   const [saved] = useState(() => readChat(pairedUrl(), botId));
@@ -392,7 +393,9 @@ export default function BotChatScreen() {
   if (working) items.push({ kind: 'status', key: 'working', text: `Working… ${elapsed}s` });
 
   return (
-    <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={90}>
+    // Padding on both platforms: Android draws edge to edge, so the window no longer resizes for the
+    // keyboard. The offset is the header above this screen (the avoider measures itself below it).
+    <KeyboardAvoidingView testID="bot-chat" style={styles.flex} behavior="padding" keyboardVerticalOffset={headerHeight}>
       {header}
       {freshness !== 'fresh' ? (
         <View style={styles.hintRow}>
