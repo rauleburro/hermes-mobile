@@ -6,6 +6,11 @@
 // Keep these in sync with `paths` in tsconfig.json. The jest-expo preset applies
 // babel-preset-expo to app sources and already handles node_modules transforms.
 const path = require('node:path');
+const expoPreset = require('jest-expo/jest-preset');
+
+// `marked` ships ESM only, so it must go through babel like the React Native packages.
+const [nodeModulesPattern, ...otherIgnorePatterns] = expoPreset.transformIgnorePatterns;
+const transformIgnorePatterns = [nodeModulesPattern.replace('(?!(', '(?!(marked|'), ...otherIgnorePatterns];
 
 const appRoot = path.join(__dirname, '../../apps/mobile');
 const appSrc = path.join(appRoot, 'src');
@@ -16,6 +21,11 @@ module.exports = {
   rootDir: __dirname,
   roots: ['<rootDir>/src'],
   testMatch: ['**/*.test.{ts,tsx}'],
+  transformIgnorePatterns,
+  // CI runners are small: a suite's first test pays the cold babel transform of React
+  // Native while other suites run in parallel workers (pair.test.tsx took ~9 s there,
+  // with its first test hitting the 5 s default).
+  testTimeout: 15_000,
   moduleNameMapper: {
     '^@mobile/(.*)$': `${appSrc}/$1`,
     // More specific first: `@/assets/*` must win over the `@/*` catch-all.
