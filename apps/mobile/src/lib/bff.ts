@@ -1,4 +1,6 @@
 import type {
+  BotChatMessagesQuery,
+  BotChatMessagesResponse,
   BotChatResponse,
   BotSendRequest,
   BotsResponse,
@@ -57,6 +59,16 @@ export const getBotMessages = (botId: string, sessionId: string) =>
   request<{ data: SessionMessage[] }>(
     `/sessions/${encodeURIComponent(sessionId)}/messages?bot=${encodeURIComponent(botId)}`,
   ).then((r) => r.data);
+
+/** A page of the Bot's Bot Chat (the BFF resolves it). Rows are chronological in both orders. */
+export function getBotChatMessages(botId: string, query: BotChatMessagesQuery = {}) {
+  const params = new URLSearchParams();
+  for (const key of ['order', 'offset', 'limit'] as const) {
+    if (query[key] !== undefined) params.set(key, String(query[key]));
+  }
+  const qs = params.toString();
+  return request<BotChatMessagesResponse>(`${bot(botId)}/chat/messages${qs ? `?${qs}` : ''}`).then((r) => r.data);
+}
 
 /**
  * Sends a turn to the Bot's Bot Chat (the BFF resolves it). Retries with the same clientMessageId,
