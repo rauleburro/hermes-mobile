@@ -164,6 +164,16 @@ describe('Markdown', () => {
     expect(screen.queryByText('•')).toBeNull();
   });
 
+  it('renders loose task list items with a checkbox instead of a stray [ ]', async () => {
+    await render(<Markdown>{'- [ ] one\n\n- [x] two'}</Markdown>);
+
+    expect(screen.getByText('☐')).toBeOnTheScreen();
+    expect(screen.getByText('☑')).toBeOnTheScreen();
+    expect(screen.getByText('one')).toBeOnTheScreen();
+    expect(screen.getByText('two')).toBeOnTheScreen();
+    expect(screen.queryByText(/\[[ x]\]/)).toBeNull();
+  });
+
   it('shows unsupported blocks such as tables as their source text', async () => {
     await render(<Markdown>{'| a | b |\n|---|---|\n| 1 | 2 |'}</Markdown>);
 
@@ -193,9 +203,11 @@ describe('Markdown', () => {
     });
 
     it('shows replies longer than the size cap as plain text', async () => {
-      const text = '**bold** '.repeat(4000); // 36 KB
+      // No emphasis delimiters, so only the size cap (not the emphasis guard) can trigger.
+      const text = '# Title\n\n' + 'word '.repeat(7000); // ~35 KB
       await render(<Markdown>{text}</Markdown>);
 
+      expect(screen.queryByRole('header')).toBeNull();
       expect(screen.getByText(text.trimEnd())).toBeOnTheScreen();
     });
 
