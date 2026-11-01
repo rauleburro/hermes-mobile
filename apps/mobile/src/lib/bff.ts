@@ -79,7 +79,7 @@ function withDeadline<T>({ ms, signal: outer, onTimeout, onAbort }: Deadline, wo
  * it reads as "Offline" next to saved data and is retried as transient. `init.signal` still
  * aborts the request (BffError code `aborted`).
  */
-async function request<T>(
+export async function request<T>(
   path: string,
   init: RequestInit = {},
   config?: BffConfig,

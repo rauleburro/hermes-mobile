@@ -10,6 +10,7 @@ import {
   HISTORY_TIMEOUT_MS,
   listBots,
   REQUEST_TIMEOUT_MS,
+  request,
   SSE_IDLE_TIMEOUT_MS,
   sendBotMessage,
   stopBotRun,
@@ -169,6 +170,23 @@ describe('request timeout', () => {
     await jest.advanceTimersByTimeAsync(1);
 
     await expect(result).resolves.toMatchObject({ code: 'timeout', status: undefined });
+  });
+
+  it('rejects at once with code `aborted` when the caller signal is already aborted', async () => {
+    hang();
+    const caller = new AbortController();
+    caller.abort();
+    const result = request('/bots', { signal: caller.signal }, config).catch((e: unknown) => e);
+    let settled = false;
+    result.then(() => (settled = true));
+
+    await jest.advanceTimersByTimeAsync(0);
+
+    expect(settled).toBe(true);
+    const error = await result;
+    expect(error).toBeInstanceOf(BffError);
+    expect(error).toMatchObject({ code: 'aborted', status: undefined, message: 'GET /bots aborted' });
+    expect(jest.getTimerCount()).toBe(0);
   });
 
   it('leaves no timer behind once the BFF answers', async () => {
