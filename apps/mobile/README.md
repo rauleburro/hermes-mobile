@@ -51,7 +51,7 @@ adb shell am start -a android.intent.action.VIEW \
 
 ### Pair with the BFF
 
-`pnpm pair` (in the repo root) prints the BFF URL, the device token, the pairing link `hermesmobile://pair?url=…&token=…` and the same link as a QR code. Opening the link opens the pair screen with the URL and token filled in; check them and tap **Pair**. The app checks `GET /health` on the BFF, stores the pairing in secure storage and goes to the home screen. If the app was already paired, the screen says which BFF the new pairing replaces.
+`pnpm pair` (in the repo root) prints the BFF URL, the device token, the pairing link `hermesmobile://pair?url=…&token=…` and the same link as a QR code. **Scan the QR code with the phone camera**: it opens the pair screen with the URL and token filled in; check them and tap **Pair**. The app checks `GET /health` on the BFF, stores the pairing in secure storage and goes to the home screen. If the app was already paired, the screen says which BFF the new pairing replaces. A link without a token never reuses the stored token for a different BFF: type the token, or use a link that carries it.
 
 How the phone reaches the BFF:
 
@@ -60,11 +60,19 @@ How the phone reaches the BFF:
   adb reverse tcp:8787 tcp:8787
   pnpm pair --url http://localhost:8787
   ```
-  The phone has no camera view of your terminal QR in this setup, so send the printed link straight to the app:
-  ```
-  adb shell am start -a android.intent.action.VIEW -d 'hermesmobile://pair?url=http%3A%2F%2Flocalhost%3A8787&token=<token>'
-  ```
-- **LAN or Tailscale.** Set `BFF_HOST=0.0.0.0` (or the Tailscale address) so the BFF listens beyond localhost, then run `pnpm pair` (it uses the first LAN address) or `pnpm pair --url http://<bff-host>:8787` with your Tailscale name or IP, and scan the QR code with the phone camera. Keep the BFF on a private network; never expose it to the internet.
+  and scan the QR code. The `localhost` URL works on the phone because `adb reverse` forwards the port.
+- **LAN or Tailscale.** Set `BFF_HOST=0.0.0.0` (or the Tailscale address) so the BFF listens beyond localhost, then run `pnpm pair` (it uses the first LAN address) or `pnpm pair --url http://<bff-host>:8787` with your Tailscale name or IP, and scan the QR code. Keep the BFF on a private network; never expose it to the internet.
+
+**Without a camera (adb).** You can send the link from the computer. Two details matter:
+
+- Quote the whole `am start` command, because `adb shell` runs it through the phone's shell, and an unquoted `&` cuts the link before `token=`.
+- Don't type the token itself: a literal token stays in your shell history. Read it from `.env` instead:
+
+```
+adb shell "am start -a android.intent.action.VIEW -d 'hermesmobile://pair?url=http%3A%2F%2Flocalhost%3A8787&token=$(grep '^DEVICE_TOKEN=' services/bff/.env | cut -d= -f2-)'"
+```
+
+The token is base64url, so it needs no further escaping. It still passes through the `adb` command line and the intent, so use this only on your own computer and phone.
 
 Without a link, open the pair screen from **Pair** on the home screen and type the URL and token.
 
