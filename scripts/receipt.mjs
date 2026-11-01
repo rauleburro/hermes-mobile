@@ -11,27 +11,14 @@
 //   node scripts/receipt.mjs stamp
 //   node scripts/receipt.mjs check [<commit-ish>]   (default HEAD)
 
-import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { git } from "./git.mjs";
 
 export const TRAILER_KEY = "Validated-tree";
 
 const HASH = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const GUIDANCE = "Run `pnpm validate` and push again.";
-
-/**
- * @param {string} cwd
- * @param {string[]} args
- * @param {string} [input]
- */
-function git(cwd, args, input) {
-  // Hooks export GIT_DIR / GIT_INDEX_FILE; cwd must decide which repo we hit.
-  const env = Object.fromEntries(
-    Object.entries(process.env).filter(([k]) => !["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"].includes(k)),
-  );
-  return execFileSync("git", args, { cwd, env, input, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
-}
 
 /**
  * Values of every `Validated-tree` trailer in the message's trailer block
