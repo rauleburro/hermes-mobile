@@ -88,7 +88,7 @@ export default function PairScreen() {
         health = await checkHealth(config);
       } catch (error) {
         setStatus(`Could not reach the BFF: ${(error as Error).message}`);
-        setNetworkHint(localNetworkHint(normalized, error));
+        setNetworkHint(localNetworkHint(normalized, error, { granted: access === 'granted' }));
         return;
       }
       try {
