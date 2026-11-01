@@ -37,9 +37,11 @@ async function requireConfig(): Promise<BffConfig> {
  */
 export const REQUEST_TIMEOUT_MS = 15_000;
 /**
- * The full Bot Chat history: up to 500 rows, with tool output ~3 KB a row (~1.5 MB). Measured
- * ~7.6 s at 200 KB/s and ~30 s at 50 KB/s, so a slow mobile link needs more than the default.
- * A dead BFF is still caught at REQUEST_TIMEOUT_MS by the Bot Chat lookup that runs first.
+ * The first full load of a Bot Chat's history: up to 500 rows, with tool output ~3 KB a row
+ * (~1.5 MB). Measured ~7.6 s at 200 KB/s and ~30 s at 50 KB/s, so a slow mobile link needs more
+ * than the default. That load runs right after the Bot Chat lookup, which catches a dead BFF at
+ * REQUEST_TIMEOUT_MS. Reloads with rows already on screen (end of turn, catch-up before a send,
+ * Refresh) have no lookup first, so they pass REQUEST_TIMEOUT_MS: a dead BFF must not hold a send.
  */
 export const HISTORY_TIMEOUT_MS = 45_000;
 
@@ -119,12 +121,13 @@ export const listBots = () => request<BotsResponse>('/bots');
 /** The Bot's canonical Bot Chat. Throws a BffError with code `bot_chat_missing` (409) when it doesn't exist yet. */
 export const getBotChat = (botId: string) => request<BotChatResponse>(`${bot(botId)}/chat`);
 
-export const getBotMessages = (botId: string, sessionId: string) =>
+/** The whole Bot Chat history; `timeoutMs` defaults to HISTORY_TIMEOUT_MS (see there). */
+export const getBotMessages = (botId: string, sessionId: string, { timeoutMs = HISTORY_TIMEOUT_MS } = {}) =>
   request<{ data: SessionMessage[] }>(
     `/sessions/${encodeURIComponent(sessionId)}/messages?bot=${encodeURIComponent(botId)}`,
     {},
     undefined,
-    HISTORY_TIMEOUT_MS,
+    timeoutMs,
   ).then((r) => r.data);
 
 /** A page of the Bot's Bot Chat (the BFF resolves it). Rows are chronological in both orders. */
