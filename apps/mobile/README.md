@@ -66,7 +66,7 @@ How the phone reaches the BFF:
 **Without a camera (adb).** You can send the link from the computer. Two details matter:
 
 - Quote the whole `am start` command, because `adb shell` runs it through the phone's shell, and an unquoted `&` cuts the link before `token=`.
-- Don't type the token itself: a literal token stays in your shell history. Read it from `.env` instead:
+- Don't type the token itself: a literal token stays in your shell history. Read it from `.env` instead, running this from the repo root (where `services/bff/.env` lives, not `apps/mobile`):
 
 ```
 adb shell "am start -a android.intent.action.VIEW -d 'hermesmobile://pair?url=http%3A%2F%2Flocalhost%3A8787&token=$(grep '^DEVICE_TOKEN=' services/bff/.env | cut -d= -f2-)'"
