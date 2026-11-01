@@ -387,6 +387,76 @@ describe('per-Bot run routes', () => {
     expect(await res.json()).toMatchObject({ error: 'bot_unreachable' });
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it('POST /bots/:bot/runs/:id/approval answers 404 for an unknown Bot with a valid body', async () => {
+    const { app, fetchMock } = setup(() => Response.json({}));
+    const res = await app.request('/bots/coder/runs/run_1/approval', {
+      method: 'POST',
+      headers: { ...auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ choice: 'once', request_id: 'p1', execution_generation: 1 }),
+    });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ error: 'bot_unreachable' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // Hermes' respond_run requires exactly {request_id, execution_generation, choice}, else 400 invalid_params.
+  it.each([
+    ['missing request_id', { choice: 'once', execution_generation: 1 }, 'request_id'],
+    ['blank request_id', { choice: 'once', request_id: ' ', execution_generation: 1 }, 'request_id'],
+    ['missing execution_generation', { choice: 'once', request_id: 'p1' }, 'execution_generation'],
+    ['non-integer execution_generation', { choice: 'once', request_id: 'p1', execution_generation: '1' }, 'execution_generation'],
+    ['missing choice', { request_id: 'p1', execution_generation: 1 }, 'choice'],
+    ['unknown choice', { choice: 'maybe', request_id: 'p1', execution_generation: 1 }, 'choice'],
+  ])('POST /bots/:bot/runs/:id/approval answers 400 for %s', async (_name, body, field) => {
+    const { app, fetchMock } = setup(() => Response.json({}));
+    const res = await app.request('/bots/default/runs/run_1/approval', {
+      method: 'POST',
+      headers: { ...auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain(field);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('GET /bots/:bot/runs/:id/events passes the client abort signal to the upstream fetch', async () => {
+    const { app, fetchMock } = setup(() => new Response('data: {}\n\n'));
+    const client = new AbortController();
+    await app.request('/bots/default/runs/run_1/events', { headers: auth, signal: client.signal });
+    const upstream = fetchMock.mock.calls[0][1]?.signal;
+    expect(upstream).toBeInstanceOf(AbortSignal);
+    expect(upstream?.aborted).toBe(false);
+    client.abort();
+    expect(upstream?.aborted).toBe(true);
+  });
+});
+
+// Bot ids come from the URL: names inherited from Object.prototype must not pass as configured Bots.
+describe.each(['constructor', '__proto__', 'toString'])('Bot named %s', (bot) => {
+  const json = { ...auth, 'Content-Type': 'application/json' };
+  it.each([
+    ['POST', `/bots/${bot}/send`, JSON.stringify({ clientMessageId: 'm1', text: 'hola' })],
+    ['GET', `/bots/${bot}/chat`, undefined],
+    ['GET', `/bots/${bot}/runs/run_1`, undefined],
+    ['GET', `/bots/${bot}/runs/run_1/events`, undefined],
+    ['POST', `/bots/${bot}/runs/run_1/stop`, undefined],
+    ['GET', `/runs/run_1?bot=${bot}`, undefined],
+    ['GET', `/sessions/s1/messages?bot=${bot}`, undefined],
+  ])('%s %s answers 404 bot_unreachable without calling Hermes', async (method, path, body) => {
+    const { app, fetchMock } = setup(() => Response.json({ data: [] }), { profileKeys: { researcher: 'r-key' } });
+    const res = await app.request(path, { method, headers: json, body });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ error: 'bot_unreachable' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('is reported unreachable in the roster', async () => {
+    const roster = () => ({ botModeEnabled: true, bots: [{ id: bot, name: bot, title: null, description: null }] });
+    const { app } = setup(() => Response.json({}), { readRoster: roster });
+    const body = await (await app.request('/bots', { headers: auth })).json();
+    expect(body.bots[0].reachable).toBe(false);
+  });
 });
 
 describe('deprecated ?bot= run aliases keep working', () => {
@@ -416,9 +486,31 @@ describe('deprecated ?bot= run aliases keep working', () => {
     await app.request('/runs/run_1/approval?bot=researcher', {
       method: 'POST',
       headers: { ...auth, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ choice: 'once' }),
+      body: JSON.stringify({ choice: 'once', request_id: 'p1', execution_generation: 1 }),
     });
     expect(fetchMock.mock.calls[0][0]).toBe('http://hermes/p/researcher/v1/runs/run_1/approval');
+  });
+
+  it('POST /runs/:id/approval?bot= answers 400 for {choice} alone', async () => {
+    const { app, fetchMock } = setup(() => Response.json({ run_id: 'run_1' }), keys);
+    const res = await app.request('/runs/run_1/approval?bot=researcher', {
+      method: 'POST',
+      headers: { ...auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ choice: 'once' }),
+    });
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('GET /runs/:id/events?bot= passes the client abort signal to the upstream fetch', async () => {
+    const { app, fetchMock } = setup(() => new Response('data: {}\n\n'), keys);
+    const client = new AbortController();
+    await app.request('/runs/run_1/events?bot=researcher', { headers: auth, signal: client.signal });
+    const upstream = fetchMock.mock.calls[0][1]?.signal;
+    expect(upstream).toBeInstanceOf(AbortSignal);
+    expect(upstream?.aborted).toBe(false);
+    client.abort();
+    expect(upstream?.aborted).toBe(true);
   });
 
   it('POST /runs/:id/stop?bot=', async () => {

@@ -73,7 +73,7 @@ export type RunEvent =
 export const TERMINAL_EVENTS = new Set(['run.completed', 'run.failed', 'run.cancelled', 'run.interrupted']);
 
 /** Hermes 0.22.5 (session authority) requires exactly `request_id` + `execution_generation` + `choice`. */
-export type ApprovalRequest = { choice: ApprovalChoice; request_id?: string; execution_generation?: number };
+export type ApprovalRequest = { choice: ApprovalChoice; request_id: string; execution_generation: number };
 
 export type HealthResponse = { ok: boolean; hermes: boolean };
 

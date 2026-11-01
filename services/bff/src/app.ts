@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { Hono, type Context } from 'hono';
 import type {
+  ApprovalChoice,
   ApprovalRequest,
   BotChatResponse,
   BotSendRequest,
@@ -34,6 +35,8 @@ const isNonBlank = (v: unknown): v is string => typeof v === 'string' && v.trim(
 // Retry hints pass through so the app can tell a draining 503 (Retry-After) from a do-not-retry one.
 const RELAYED_HEADERS = ['Retry-After', 'x-should-retry'];
 
+const APPROVAL_CHOICES: readonly ApprovalChoice[] = ['once', 'session', 'always', 'deny'];
+
 class UnknownBotError extends Error {}
 
 export function createApp({
@@ -44,7 +47,9 @@ export function createApp({
   readRoster = () => ({ botModeEnabled: false, bots: [] }),
   fetch: doFetch = fetch,
 }: AppOptions) {
-  const keyFor = (bot: string) => (bot === DEFAULT_BOT ? hermesApiKey : profileKeys[bot]);
+  // Own keys only: Bot ids come from the URL, and `constructor` or `__proto__` must not resolve.
+  const keyFor = (bot: string): string | undefined =>
+    bot === DEFAULT_BOT ? hermesApiKey : Object.hasOwn(profileKeys, bot) ? profileKeys[bot] : undefined;
 
   const hermes = (path: string, init: RequestInit = {}, bot = DEFAULT_BOT) => {
     const key = keyFor(bot);
@@ -207,10 +212,17 @@ export function createApp({
     });
   };
 
+  // Hermes answers 400 invalid_params unless the body is exactly these three fields.
   const approveRun = async (c: RunContext) => {
-    const body = await c.req.json<ApprovalRequest>().catch(() => null);
-    if (!body?.choice) return c.json({ error: 'choice is required' }, 400);
+    const body = (await c.req.json<Partial<ApprovalRequest> | null>().catch(() => null)) ?? {};
     const { choice, request_id, execution_generation } = body;
+    if (!APPROVAL_CHOICES.includes(choice as ApprovalChoice)) {
+      return c.json({ error: `choice is required (one of ${APPROVAL_CHOICES.join(', ')})` }, 400);
+    }
+    if (!isNonBlank(request_id)) return c.json({ error: 'request_id is required' }, 400);
+    if (!Number.isInteger(execution_generation)) {
+      return c.json({ error: 'execution_generation is required (an integer)' }, 400);
+    }
     return hermes(
       runPath(c, '/approval'),
       { method: 'POST', body: JSON.stringify({ choice, request_id, execution_generation }) },
