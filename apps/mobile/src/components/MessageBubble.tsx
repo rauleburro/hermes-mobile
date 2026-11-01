@@ -1,7 +1,8 @@
 import { useTheme } from 'expo-router';
 import { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { hasOpenableLinks, Markdown } from '@/components/Markdown';
+import { Markdown } from '@/components/Markdown';
+import { hasOpenableLinks } from '@/lib/markdown';
 
 export type MessageRole = 'user' | 'assistant';
 

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react-native';
 import { Linking, Platform, StyleSheet } from 'react-native';
-import { hasOpenableLinks, Markdown } from '@mobile/components/Markdown';
+import { Markdown } from '@mobile/components/Markdown';
+import { hasOpenableLinks } from '@mobile/lib/markdown';
 
 // The component reads its colors from the navigation theme. Each test can switch it.
 const LIGHT = { dark: false, colors: { text: 'rgb(28, 28, 30)', border: 'rgb(216, 216, 216)', primary: 'rgb(0, 122, 255)' } };
