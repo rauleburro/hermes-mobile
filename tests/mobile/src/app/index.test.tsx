@@ -406,6 +406,23 @@ describe('HomeScreen on the local network (Android 17 Nearby devices)', () => {
     expect(await screen.findByText(LOCAL_NETWORK_HINT)).toBeOnTheScreen();
   });
 
+  it("drops an older refresh's hint that lands after a newer refresh failed for another reason", async () => {
+    let landHint: (hint: string | null) => void = () => {};
+    jest.mocked(checkedLocalNetworkHint).mockImplementationOnce(() => new Promise((resolve) => (landHint = resolve)));
+    jest.mocked(listBots).mockRejectedValueOnce(networkError).mockRejectedValueOnce(new Error('GET /bots failed (502)'));
+    await render(<HomeScreen />);
+    expect(await screen.findByText('Network request failed')).toBeOnTheScreen();
+    await waitFor(() => expect(checkedLocalNetworkHint).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      fireEvent(screen.getByTestId('roster'), 'refresh');
+    });
+    expect(await screen.findByText('GET /bots failed (502)')).toBeOnTheScreen();
+    await act(async () => landHint(LOCAL_NETWORK_HINT));
+
+    expect(screen.queryByText(LOCAL_NETWORK_HINT)).toBeNull();
+  });
+
   describe('with the real permission check on Android 17', () => {
     const actual = jest.requireActual<typeof import('@mobile/lib/localNetwork')>('@mobile/lib/localNetwork');
     function android17(holdsNearbyDevices: boolean) {
