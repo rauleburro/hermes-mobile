@@ -1,8 +1,9 @@
 import { timingSafeEqual } from 'node:crypto';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import type {
   ApprovalRequest,
   BotChatResponse,
+  BotSendRequest,
   BotsResponse,
   HealthResponse,
   SendMessageRequest,
@@ -27,6 +28,11 @@ function tokenMatches(header: string | undefined, expected: string): boolean {
   const wanted = Buffer.from(expected);
   return presented.length === wanted.length && timingSafeEqual(presented, wanted);
 }
+
+const isNonBlank = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '';
+
+// Retry hints pass through so the app can tell a draining 503 (Retry-After) from a do-not-retry one.
+const RELAYED_HEADERS = ['Retry-After', 'x-should-retry'];
 
 class UnknownBotError extends Error {}
 
@@ -55,11 +61,48 @@ export function createApp({
   };
 
   // Relays Hermes' status and JSON body unchanged; the app only knows the BFF.
-  const relay = async (res: Response) =>
-    new Response(res.body, {
-      status: res.status,
-      headers: { 'Content-Type': res.headers.get('Content-Type') ?? 'application/json' },
-    });
+  const relay = async (res: Response) => {
+    const headers = new Headers({ 'Content-Type': res.headers.get('Content-Type') ?? 'application/json' });
+    for (const name of RELAYED_HEADERS) {
+      const value = res.headers.get(name);
+      if (value !== null) headers.set(name, value);
+    }
+    return new Response(res.body, { status: res.status, headers });
+  };
+
+  // The canonical forever-chat of a Bot (same lookup as `hermes peer dm`): its session id, or the
+  // response to answer instead (Hermes' error relayed, or 409 bot_chat_missing).
+  const findBotChat = async (bot: string): Promise<{ sessionId: string } | { error: Response }> => {
+    const res = await hermes('/api/sessions?title=Bot%20Chat&include_hidden=true', {}, bot);
+    if (!res.ok) return { error: await relay(res) };
+    const { data } = (await res.json()) as { data: { id: string; title?: string }[] };
+    const chat = data.find((s) => s.title === 'Bot Chat');
+    if (!chat) {
+      const message = 'Open this Bot once in Hermes Desktop to create its Bot Chat';
+      return { error: Response.json({ error: 'bot_chat_missing', message }, { status: 409 }) };
+    }
+    return { sessionId: chat.id };
+  };
+
+  // Creates a run in a session. The payload must stay byte-identical for a given message: Hermes
+  // fingerprints it under the Idempotency-Key, and a mismatch is 409 idempotency_key_conflict.
+  const startRun = async (bot: string, sessionId: string, clientMessageId: string, text: string) => {
+    const res = await hermes(
+      '/v1/runs',
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': clientMessageId },
+        body: JSON.stringify({ input: text, session_id: sessionId }),
+      },
+      bot,
+    );
+    if (!res.ok) return relay(res);
+    const run = (await res.json()) as { run_id: string };
+    return Response.json({
+      runId: run.run_id,
+      replayed: res.headers.get('Idempotency-Replayed') === 'true',
+    } satisfies SendMessageResponse);
+  };
 
   const app = new Hono();
 
@@ -93,17 +136,24 @@ export function createApp({
     });
   });
 
-  // The canonical forever-chat of a Bot (same lookup as `hermes peer dm`).
   app.get('/bots/:bot/chat', async (c) => {
     const bot = c.req.param('bot');
-    const res = await hermes('/api/sessions?title=Bot%20Chat&include_hidden=true', {}, bot);
-    if (!res.ok) return relay(res);
-    const { data } = (await res.json()) as { data: { id: string; title?: string }[] };
-    const chat = data.find((s) => s.title === 'Bot Chat') ?? null;
-    if (!chat) {
-      return c.json({ error: 'bot_chat_missing', message: 'Open this Bot once in Hermes Desktop to create its Bot Chat' }, 409);
+    const chat = await findBotChat(bot);
+    if ('error' in chat) return chat.error;
+    return c.json<BotChatResponse>({ botId: bot, sessionId: chat.sessionId });
+  });
+
+  // Sends to the Bot's Bot Chat, resolved here: the app never picks a session (Bot Mode).
+  app.post('/bots/:bot/send', async (c) => {
+    const bot = c.req.param('bot');
+    const body = (await c.req.json<Partial<BotSendRequest> | null>().catch(() => null)) ?? {};
+    if (!isNonBlank(body.clientMessageId) || !isNonBlank(body.text)) {
+      return c.json({ error: 'clientMessageId and text are required' }, 400);
     }
-    return c.json<BotChatResponse>({ botId: bot, sessionId: chat.id });
+    if (!keyFor(bot)) throw new UnknownBotError(bot);
+    const chat = await findBotChat(bot);
+    if ('error' in chat) return chat.error;
+    return startRun(bot, chat.sessionId, body.clientMessageId, body.text);
   });
 
   app.get('/sessions', (c) => {
@@ -123,68 +173,66 @@ export function createApp({
     ).then(relay),
   );
 
+  /** @deprecated Use POST /bots/:bot/send, which resolves the Bot Chat server-side. Kept for older app builds. */
   app.post('/chat/send', async (c) => {
     const body = await c.req.json<SendMessageRequest>().catch(() => null);
     if (!body?.sessionId || !body.clientMessageId || !body.text?.trim()) {
       return c.json({ error: 'sessionId, clientMessageId and text are required' }, 400);
     }
-    const res = await hermes(
-      '/v1/runs',
-      {
-        method: 'POST',
-        headers: { 'Idempotency-Key': body.clientMessageId },
-        body: JSON.stringify({ input: body.text, session_id: body.sessionId }),
-      },
-      body.botId ?? DEFAULT_BOT,
-    );
-    if (!res.ok) return relay(res);
-    const run = (await res.json()) as { run_id: string };
-    return c.json<SendMessageResponse>({
-      runId: run.run_id,
-      replayed: res.headers.get('Idempotency-Replayed') === 'true',
-    });
+    return startRun(body.botId ?? DEFAULT_BOT, body.sessionId, body.clientMessageId, body.text);
   });
 
-  // Runs are scoped to the profile that created them, so every run route takes ?bot=.
-  const runPath = (id: string, suffix = '') => `/v1/runs/${encodeURIComponent(id)}${suffix}`;
+  // Runs are scoped to the profile that created them. Each run handler is mounted twice: under
+  // /bots/:bot/runs/:id, and as the deprecated alias /runs/:id?bot= (default Bot when omitted).
+  type RunContext = Context<{}, '/bots/:bot/runs/:id' | '/runs/:id'>;
+  const runPath = (c: RunContext, suffix = '') => `/v1/runs/${encodeURIComponent(c.req.param('id'))}${suffix}`;
+  const botOf = (c: RunContext) => c.req.param('bot') ?? c.req.query('bot') ?? DEFAULT_BOT;
 
-  app.get('/runs/:id', (c) =>
-    hermes(runPath(c.req.param('id')), {}, c.req.query('bot') ?? DEFAULT_BOT).then(relay),
-  );
+  const getRun = (c: RunContext) => hermes(runPath(c), {}, botOf(c)).then(relay);
 
   // SSE passthrough. Last-Event-ID lets the app resume after a dropped connection.
-  app.get('/runs/:id/events', async (c) => {
+  const runEvents = async (c: RunContext) => {
     const lastEventId = c.req.header('Last-Event-ID');
     const res = await hermes(
-      runPath(c.req.param('id'), '/events'),
+      runPath(c, '/events'),
       {
         headers: { Accept: 'text/event-stream', ...(lastEventId ? { 'Last-Event-ID': lastEventId } : {}) },
         signal: c.req.raw.signal,
       },
-      c.req.query('bot') ?? DEFAULT_BOT,
+      botOf(c),
     );
     if (!res.ok || !res.body) return relay(res);
     return new Response(res.body, {
       headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' },
     });
-  });
+  };
 
-  app.post('/runs/:id/approval', async (c) => {
+  const approveRun = async (c: RunContext) => {
     const body = await c.req.json<ApprovalRequest>().catch(() => null);
     if (!body?.choice) return c.json({ error: 'choice is required' }, 400);
     const { choice, request_id, execution_generation } = body;
     return hermes(
-      runPath(c.req.param('id'), '/approval'),
+      runPath(c, '/approval'),
       { method: 'POST', body: JSON.stringify({ choice, request_id, execution_generation }) },
-      c.req.query('bot') ?? DEFAULT_BOT,
+      botOf(c),
     ).then(relay);
-  });
+  };
 
-  app.post('/runs/:id/stop', (c) =>
-    hermes(runPath(c.req.param('id'), '/stop'), { method: 'POST', body: '{}' }, c.req.query('bot') ?? DEFAULT_BOT).then(
-      relay,
-    ),
-  );
+  const stopRun = (c: RunContext) => hermes(runPath(c, '/stop'), { method: 'POST', body: '{}' }, botOf(c)).then(relay);
+
+  app.get('/bots/:bot/runs/:id', getRun);
+  app.get('/bots/:bot/runs/:id/events', runEvents);
+  app.post('/bots/:bot/runs/:id/approval', approveRun);
+  app.post('/bots/:bot/runs/:id/stop', stopRun);
+
+  /** @deprecated Use GET /bots/:bot/runs/:id. */
+  app.get('/runs/:id', getRun);
+  /** @deprecated Use GET /bots/:bot/runs/:id/events. */
+  app.get('/runs/:id/events', runEvents);
+  /** @deprecated Use POST /bots/:bot/runs/:id/approval. */
+  app.post('/runs/:id/approval', approveRun);
+  /** @deprecated Use POST /bots/:bot/runs/:id/stop. */
+  app.post('/runs/:id/stop', stopRun);
 
   return app;
 }

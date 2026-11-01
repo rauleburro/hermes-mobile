@@ -76,3 +76,15 @@ export const TERMINAL_EVENTS = new Set(['run.completed', 'run.failed', 'run.canc
 export type ApprovalRequest = { choice: ApprovalChoice; request_id?: string; execution_generation?: number };
 
 export type HealthResponse = { ok: boolean; hermes: boolean };
+
+/**
+ * POST /bots/:bot/send. The BFF resolves the Bot's canonical Bot Chat, so there is no session id.
+ * Answers {@link SendMessageResponse}; resending the same clientMessageId returns the same runId
+ * with `replayed: true`. Errors: 400 bad body, 404 `bot_unreachable`, 409 `bot_chat_missing`,
+ * and Hermes errors relayed as-is (e.g. 503 with Retry-After while the gateway drains).
+ */
+export type BotSendRequest = {
+  /** Client-generated, reused on retry; becomes the Hermes Idempotency-Key. */
+  clientMessageId: string;
+  text: string;
+};
