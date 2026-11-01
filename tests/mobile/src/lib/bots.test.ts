@@ -40,6 +40,16 @@ describe('lastMessagePreview', () => {
     expect(lastMessagePreview([msg('user', 'first'), msg('assistant', '[d]: https://example.com')])).toBe('first');
   });
 
+  it('skips a hidden row, which the Bot Chat does not show either', () => {
+    const hidden: SessionMessage = { role: 'assistant', content: 'internal bookkeeping', display_kind: 'hidden' };
+    expect(lastMessagePreview([msg('user', 'what the user sees'), hidden])).toBe('what the user sees');
+  });
+
+  it("previews the user's own Bot Chat sends, which Hermes stores as internal notifications", () => {
+    const sent: SessionMessage = { role: 'user', content: 'sent from the app', display_kind: 'internal_notification' };
+    expect(lastMessagePreview([msg('assistant', 'older reply'), sent])).toBe('sent from the app');
+  });
+
   it('is null when there is nothing to show', () => {
     expect(lastMessagePreview([])).toBeNull();
   });
