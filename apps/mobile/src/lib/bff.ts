@@ -247,7 +247,10 @@ export async function followBotRun(
     } catch (error) {
       if (signal.aborted) return;
       if (error instanceof BffError && error.status === 404) throw error;
-      // A silent stream counts like a dropped one: after a few in a row the turn is reported lost.
+      // Counts connections in a row that never opened (refused, an error status, or silent while
+      // connecting); six of them report the turn lost. A connection that opens resets the count, so
+      // a stream that keeps opening and then stalling is reopened until the turn's polling cap
+      // (useTurnPolling) ends the turn: reopening with Last-Event-ID is cheap.
       failures++;
       if (failures > 5) throw error;
       await new Promise((r) => setTimeout(r, Math.min(1000 * 2 ** failures, 10_000)));

@@ -371,6 +371,31 @@ describe('Bot Chat turns', () => {
       expect(streamingFetch).toHaveBeenCalledTimes(1);
     });
 
+    it('gives up after six connections in a row that never open (e.g. a stopped BFF)', async () => {
+      jest.mocked(streamingFetch).mockImplementation(() => new Promise(() => {}) as never);
+      const result = followBotRun('default', 'run-1', () => {}, new AbortController().signal).catch((e: unknown) => e);
+
+      // Six idle trips, with the 2/4/8/10/10 s backoff between them.
+      await jest.advanceTimersByTimeAsync(6 * SSE_IDLE_TIMEOUT_MS + 34_000);
+
+      await expect(result).resolves.toMatchObject({ code: 'timeout' });
+      expect(streamingFetch).toHaveBeenCalledTimes(6);
+    });
+
+    it('keeps reopening a stream that opens and then stalls: each open resets the count, the polling cap ends the turn', async () => {
+      const stalls = 8;
+      for (let i = 0; i < stalls; i++) jest.mocked(streamingFetch).mockResolvedValueOnce(silentAfter() as never);
+      jest.mocked(streamingFetch).mockResolvedValueOnce(sseResponse(completed) as never);
+      const events: RunEvent[] = [];
+      const done = followBotRun('default', 'run-1', (e) => events.push(e), new AbortController().signal);
+
+      await jest.advanceTimersByTimeAsync(stalls * (SSE_IDLE_TIMEOUT_MS + 2_000));
+      await done;
+
+      expect(streamingFetch).toHaveBeenCalledTimes(stalls + 1);
+      expect(events.map((e) => e.event)).toEqual(['run.completed']);
+    });
+
     /** Counts the abort listeners currently registered on `signal`. */
     function trackAbortListeners(signal: AbortSignal) {
       const live = new Set<unknown>();
