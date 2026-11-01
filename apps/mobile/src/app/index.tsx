@@ -1,11 +1,12 @@
 import type { BotSummary, BotsResponse } from '@hermes-mobile/api';
 import { router, Stack, useFocusEffect, useTheme } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { BotAvatar } from '@/components/BotAvatar';
 import { BotModeDisabled } from '@/components/BotModeDisabled';
 import { BffError, getBotChat, getBotMessages, listBots } from '@/lib/bff';
 import { lastMessagePreview } from '@/lib/bots';
+import { bindCache, cacheOwner, readRoster, writeRoster } from '@/lib/cache';
 import { loadConfig } from '@/lib/config';
 
 const NO_BOT_CHAT = 'No Bot Chat yet';
@@ -22,24 +23,40 @@ async function loadPreview(botId: string): Promise<string | undefined> {
 
 export default function HomeScreen() {
   const { colors } = useTheme();
-  const [roster, setRoster] = useState<BotsResponse | null>(null);
-  const [previews, setPreviews] = useState<Record<string, string | undefined>>({});
+  // First paint comes from the local cache (synchronous), then the BFF replaces it.
+  const [saved] = useState(readRoster);
+  const [roster, setRoster] = useState<BotsResponse | null>(saved?.roster ?? null);
+  const [previews, setPreviews] = useState<Record<string, string | undefined>>(saved?.previews ?? {});
+  /** True while the roster on screen is the saved copy, not a fresh answer from the BFF. */
+  const [fromCache, setFromCache] = useState(saved !== null);
+  /** Which BFF the roster on screen belongs to. */
+  const owner = useRef(saved ? cacheOwner() : null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Each refresh bumps this; previews from an older refresh are dropped when they land.
   const generation = useRef(0);
 
   const refresh = useCallback(async () => {
-    if (!(await loadConfig())) {
+    const config = await loadConfig();
+    if (!config) {
       router.push('/pair');
       return;
     }
+    bindCache(config.url);
+    if (owner.current !== null && owner.current !== config.url) {
+      // Paired with another BFF since this roster was loaded: never show its data.
+      setRoster(null);
+      setPreviews({});
+      setFromCache(false);
+    }
+    owner.current = config.url;
     const current = ++generation.current;
     setLoading(true);
     try {
       const next = await listBots();
       if (current !== generation.current) return;
       setRoster(next);
+      setFromCache(false);
       setError(null);
       // Previews fill in after the roster renders; one failing Bot never blanks the list.
       next.bots
@@ -56,6 +73,11 @@ export default function HomeScreen() {
       if (current === generation.current) setLoading(false);
     }
   }, []);
+
+  // Only fresh data is saved: a failed refresh never overwrites the cache.
+  useEffect(() => {
+    if (roster && !fromCache) writeRoster(roster, previews);
+  }, [roster, previews, fromCache]);
 
   useFocusEffect(
     useCallback(() => {
@@ -117,7 +139,13 @@ export default function HomeScreen() {
         keyExtractor={(b) => b.id}
         refreshing={loading}
         onRefresh={refresh}
-        ListHeaderComponent={error ? <Text style={[styles.error, { color: colors.notification }]}>{error}</Text> : undefined}
+        ListHeaderComponent={
+          fromCache && (loading || error) ? (
+            <Text style={[styles.hint, { color: colors.text }]}>{error ? 'Offline · showing saved data' : 'Updating…'}</Text>
+          ) : error ? (
+            <Text style={[styles.error, { color: colors.notification }]}>{error}</Text>
+          ) : undefined
+        }
         ListEmptyComponent={
           roster && !error ? (
             <Text style={[styles.empty, { color: colors.text }]}>No Bots yet. Create one in Hermes Desktop (Bots tab).</Text>
@@ -144,4 +172,5 @@ const styles = StyleSheet.create({
   preview: { fontSize: 14, opacity: 0.6 },
   empty: { textAlign: 'center', marginTop: 48, opacity: 0.6, paddingHorizontal: 24 },
   error: { padding: 16 },
+  hint: { paddingHorizontal: 16, paddingVertical: 6, fontSize: 12, opacity: 0.6, textAlign: 'center' },
 });

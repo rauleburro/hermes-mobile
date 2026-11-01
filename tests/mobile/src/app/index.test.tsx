@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, userEvent, waitFor } from '@testing-lib
 import { router } from 'expo-router';
 import HomeScreen from '@mobile/app/index';
 import { BffError, getBotChat, getBotMessages, listBots } from '@mobile/lib/bff';
+import { bindCache, cacheStorage, readRoster, writeRoster } from '@mobile/lib/cache';
 import { loadConfig } from '@mobile/lib/config';
 
 jest.mock('expo-router', () => {
@@ -35,6 +36,7 @@ function roster(bots: BotSummary[], botModeEnabled = true) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  cacheStorage().clearAll();
   jest.mocked(loadConfig).mockResolvedValue({ url: 'http://bff.local:8787', token: 'secret' });
   jest.mocked(getBotChat).mockImplementation(async (botId) => ({ botId, sessionId: `chat-${botId}` }));
   jest.mocked(getBotMessages).mockResolvedValue([]);
@@ -209,5 +211,72 @@ describe('HomeScreen (Bots roster)', () => {
     await screen.findByText('Hermes');
 
     expect(screen.queryByText('New')).toBeNull();
+  });
+});
+
+describe('HomeScreen with the local cache', () => {
+  const BFF = 'http://bff.local:8787';
+  const never = () => new Promise<never>(() => {});
+
+  function cached(bots: BotSummary[], previews: Record<string, string> = {}, owner = BFF) {
+    bindCache(owner);
+    writeRoster({ botModeEnabled: true, bots }, previews);
+  }
+
+  it('paints the cached roster and previews immediately, marked as updating', async () => {
+    cached([bot({ id: 'default', name: 'Hermes', title: 'Personal assistant' })], { default: 'saved pong' });
+    jest.mocked(listBots).mockImplementation(never);
+    await render(<HomeScreen />);
+
+    expect(screen.getByText('Hermes')).toBeOnTheScreen();
+    expect(screen.getByText('Personal assistant')).toBeOnTheScreen();
+    expect(screen.getByText('saved pong')).toBeOnTheScreen();
+    expect(screen.getByText('Updating…')).toBeOnTheScreen();
+  });
+
+  it('replaces the cached roster with the fresh one and saves it', async () => {
+    cached([bot({ id: 'old', name: 'Old Bot' })], { old: 'old preview' });
+    roster([bot({ id: 'default', name: 'Hermes' })]);
+    jest.mocked(getBotMessages).mockResolvedValue([{ role: 'assistant', content: 'fresh pong' }]);
+    await render(<HomeScreen />);
+
+    expect(await screen.findByText('fresh pong')).toBeOnTheScreen();
+    expect(screen.queryByText('Old Bot')).toBeNull();
+    expect(screen.queryByText('Updating…')).toBeNull();
+    expect(screen.queryByText(/showing saved/)).toBeNull();
+    expect(readRoster()).toMatchObject({
+      roster: { bots: [expect.objectContaining({ id: 'default', name: 'Hermes' })] },
+      previews: { default: 'fresh pong' },
+    });
+  });
+
+  it('keeps showing the saved roster with an offline hint when the refresh fails', async () => {
+    cached([bot({ id: 'default', name: 'Hermes' })], { default: 'saved pong' });
+    jest.mocked(listBots).mockRejectedValue(new Error('Network request failed'));
+    await render(<HomeScreen />);
+
+    expect(await screen.findByText(/Offline · showing saved data/)).toBeOnTheScreen();
+    expect(screen.getByText('Hermes')).toBeOnTheScreen();
+    expect(screen.getByText('saved pong')).toBeOnTheScreen();
+    expect(screen.queryByText('Updating…')).toBeNull();
+    expect(readRoster()?.previews).toEqual({ default: 'saved pong' });
+  });
+
+  it('caches nothing and shows the plain error when the first load fails', async () => {
+    jest.mocked(listBots).mockRejectedValue(new Error('GET /bots failed (502)'));
+    await render(<HomeScreen />);
+
+    expect(await screen.findByText('GET /bots failed (502)')).toBeOnTheScreen();
+    expect(screen.queryByText(/showing saved/)).toBeNull();
+    expect(readRoster()).toBeNull();
+  });
+
+  it("drops another BFF's roster as soon as it knows the app is paired elsewhere", async () => {
+    cached([bot({ id: 'alpha', name: 'Alpha Bot' })], {}, 'http://other.local:8787');
+    jest.mocked(listBots).mockImplementation(never);
+    await render(<HomeScreen />);
+
+    await waitFor(() => expect(screen.queryByText('Alpha Bot')).toBeNull());
+    expect(readRoster()).toBeNull();
   });
 });

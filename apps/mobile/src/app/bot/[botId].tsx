@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { MessageBubble, type MessageRole } from '@/components/MessageBubble';
 import { BffError, followBotRun, getBotChat, getBotMessages, sendBotMessage, stopBotRun } from '@/lib/bff';
+import { dropChat, readChat, writeChat } from '@/lib/cache';
 
 /** `id` is the Hermes message id (history rows only); ids grow monotonically within a session. */
 type Line = { key: string; role: MessageRole | 'status'; text: string; id?: number };
@@ -72,8 +73,12 @@ function useElapsed(since: number | null) {
 export default function BotChatScreen() {
   const { botId, name } = useLocalSearchParams<{ botId: string; name?: string }>();
   const { colors } = useTheme();
-  const [state, setState] = useState<ChatState>({ kind: 'loading' });
-  const [history, setHistory] = useState<Line[]>([]);
+  // First paint comes from the local cache (synchronous), then the BFF replaces it.
+  const [saved] = useState(() => readChat(botId));
+  const [state, setState] = useState<ChatState>(saved ? { kind: 'ready', sessionId: saved.sessionId } : { kind: 'loading' });
+  const [history, setHistory] = useState<Line[]>(() => (saved ? toLines(saved.messages) : []));
+  /** Whether the history on screen is the BFF's answer or the saved copy (being refreshed, or offline). */
+  const [freshness, setFreshness] = useState<'fresh' | 'updating' | 'offline'>(saved ? 'updating' : 'fresh');
   const [pending, setPending] = useState<Line[]>([]);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [draft, setDraft] = useState('');
@@ -91,12 +96,18 @@ export default function BotChatScreen() {
         const { sessionId } = await getBotChat(botId);
         const messages = await getBotMessages(botId, sessionId);
         if (!active) return;
+        writeChat(botId, sessionId, messages);
         setHistory(toLines(messages));
         setState({ kind: 'ready', sessionId });
+        setFreshness('fresh');
       } catch (e) {
         if (!active) return;
-        if (e instanceof BffError && e.code === 'bot_chat_missing') setState({ kind: 'missing' });
-        else if (e instanceof BffError && e.code === 'bot_unreachable') setState({ kind: 'unreachable' });
+        const missing = e instanceof BffError && e.code === 'bot_chat_missing';
+        const unreachable = e instanceof BffError && e.code === 'bot_unreachable';
+        if (missing || unreachable) dropChat(botId); // The BFF's answer beats the saved copy.
+        if (missing) setState({ kind: 'missing' });
+        else if (unreachable) setState({ kind: 'unreachable' });
+        else if (saved) setFreshness('offline');
         else setState({ kind: 'error', message: (e as Error).message });
       }
     })();
@@ -104,7 +115,7 @@ export default function BotChatScreen() {
       active = false;
       abortRef.current?.abort();
     };
-  }, [botId]);
+  }, [botId, saved]);
 
   // Bot Chat turns go through Hermes' Bot Chat queue: the stream only carries the final event.
   // Approval requests are not actionable for Bot Chat runs through the API, so they are ignored.
@@ -126,7 +137,9 @@ export default function BotChatScreen() {
    * (after the baseline) with the same role, so an older identical reply never swallows it.
    */
   async function reconcile(sessionId: string) {
-    const fresh = toLines(await getBotMessages(botId, sessionId));
+    const messages = await getBotMessages(botId, sessionId);
+    writeChat(botId, sessionId, messages);
+    const fresh = toLines(messages);
     const added = rowsAfter(fresh, baselineRef.current);
     const newCount = { user: added.filter((l) => l.role === 'user').length, assistant: added.filter((l) => l.role === 'assistant').length };
     setHistory(fresh);
@@ -169,7 +182,8 @@ export default function BotChatScreen() {
 
   function send() {
     const text = draft.trim();
-    if (!text || workingSince !== null || state.kind !== 'ready') return;
+    // Only send against the BFF's history: the turn is reconciled against it (baseline).
+    if (!text || workingSince !== null || state.kind !== 'ready' || freshness !== 'fresh') return;
     const clientMessageId = Crypto.randomUUID();
     baselineRef.current = baselineOf(history);
     // A message that was never sent is given up when the user sends a different one;
@@ -237,6 +251,11 @@ export default function BotChatScreen() {
   return (
     <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={90}>
       {header}
+      {freshness !== 'fresh' ? (
+        <Text style={[styles.hint, { color: colors.text }]}>
+          {freshness === 'offline' ? 'Offline · showing saved messages' : 'Updating…'}
+        </Text>
+      ) : null}
       <FlatList
         style={styles.flex}
         contentContainerStyle={styles.list}
@@ -273,7 +292,7 @@ export default function BotChatScreen() {
           multiline
           editable={!working}
         />
-        <Button title="Send" onPress={send} disabled={!draft.trim() || working} />
+        <Button title="Send" onPress={send} disabled={!draft.trim() || working || freshness !== 'fresh'} />
       </View>
     </KeyboardAvoidingView>
   );
@@ -283,6 +302,7 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   list: { padding: 12, gap: 8 },
   status: { alignSelf: 'center', opacity: 0.6, fontSize: 13 },
+  hint: { textAlign: 'center', opacity: 0.6, fontSize: 12, paddingVertical: 4 },
   notice: { flex: 1, padding: 24, justifyContent: 'center' },
   noticeText: { fontSize: 16, textAlign: 'center', lineHeight: 22 },
   banner: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 6, borderTopWidth: StyleSheet.hairlineWidth },
