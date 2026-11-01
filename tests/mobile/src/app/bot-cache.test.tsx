@@ -2,7 +2,7 @@ import type { BotChatResponse, RunEvent } from '@hermes-mobile/api';
 import { act, render, screen, userEvent, waitFor } from '@testing-library/react-native';
 import { AppState, type AppStateStatus } from 'react-native';
 import BotChatScreen from '@mobile/app/bot/[botId]';
-import { BffError, followBotRun, getBotChat, getBotMessages, sendBotMessage } from '@mobile/lib/bff';
+import { BffError, followBotRun, getBotChat, getBotChatMessages, getBotMessages, sendBotMessage } from '@mobile/lib/bff';
 import { bindCache, cacheStorage, readChat, writeChat } from '@mobile/lib/cache';
 import { loadConfig, pairedUrl } from '@mobile/lib/config';
 
@@ -10,6 +10,7 @@ jest.mock('expo-router', () => ({
   Stack: { Screen: () => null },
   useLocalSearchParams: () => ({ botId: 'default', name: 'Hermes' }),
   useTheme: () => ({ colors: { text: 'black', border: 'gray', notification: 'red', card: 'white', primary: 'blue' } }),
+  useFocusEffect: (effect: () => void | (() => void)) => jest.requireActual<typeof import('react')>('react').useEffect(effect, [effect]),
 }));
 jest.mock('expo-crypto', () => ({ randomUUID: () => 'client-msg-1' }));
 jest.mock('@mobile/lib/bff', () => {
@@ -18,6 +19,7 @@ jest.mock('@mobile/lib/bff', () => {
     BffError: actual.BffError,
     getBotChat: jest.fn(),
     getBotMessages: jest.fn(),
+    getBotChatMessages: jest.fn(),
     sendBotMessage: jest.fn(),
     followBotRun: jest.fn(),
     stopBotRun: jest.fn(),
@@ -58,6 +60,7 @@ beforeEach(() => {
     { id: 1, role: 'user', content: 'fresh question' },
     { id: 2, role: 'assistant', content: 'fresh answer' },
   ]);
+  jest.mocked(getBotChatMessages).mockResolvedValue([]);
 });
 
 describe('BotChatScreen with the local cache', () => {
@@ -223,5 +226,53 @@ describe('BotChatScreen with the local cache', () => {
     await user.press(screen.getByRole('button', { name: 'Send' }));
 
     await waitFor(() => expect(readChat(BFF, 'default')?.messages.at(-1)).toMatchObject({ content: 'E2E-OK 7' }));
+  });
+
+  describe('with tool cards', () => {
+    const toolRows = [
+      { id: 1, role: 'user' as const, content: 'what time is it?' },
+      {
+        id: 2,
+        role: 'assistant' as const,
+        content: '',
+        tool_calls: [{ id: 'call_a', type: 'function', function: { name: 'clock', arguments: '{"tz":"UTC"}' } }],
+        finish_reason: 'tool_calls',
+      },
+      { id: 3, role: 'tool' as const, content: '12:00 UTC', tool_call_id: 'call_a' },
+      { id: 4, role: 'assistant' as const, content: 'It is noon.', finish_reason: 'stop' },
+    ];
+
+    it('never paints a tool card from the saved copy; cards come with the BFF rows', async () => {
+      bindCache(BFF);
+      writeChat(BFF, 'default', 'chat-default', toolRows);
+      let answer: (r: BotChatResponse) => void = () => {};
+      jest.mocked(getBotChat).mockImplementation(() => new Promise((resolve) => (answer = resolve)));
+      jest.mocked(getBotMessages).mockResolvedValue(toolRows);
+      await render(<BotChatScreen />);
+
+      expect(screen.getByText('It is noon.')).toBeOnTheScreen();
+      expect(screen.queryByLabelText(/^Tool clock/)).toBeNull();
+
+      await act(async () => answer({ botId: 'default', sessionId: 'chat-default' }));
+      expect(await screen.findByRole('button', { name: 'Tool clock, tz: UTC, done' })).toBeOnTheScreen();
+      expect(readChat(BFF, 'default')?.messages.map((m) => m.content)).toEqual(['what time is it?', 'It is noon.']);
+    });
+
+    it('never polls while the saved copy is on screen', async () => {
+      jest.useFakeTimers();
+      try {
+        savedChat();
+        jest.mocked(getBotChat).mockRejectedValue(new TypeError('Network request failed'));
+        await render(<BotChatScreen />);
+        await screen.findByText('Offline · showing saved messages');
+
+        await act(async () => jest.advanceTimersByTime(30_000));
+
+        expect(getBotChatMessages).not.toHaveBeenCalled();
+        expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
   });
 });

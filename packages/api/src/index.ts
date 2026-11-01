@@ -1,12 +1,40 @@
 // Contract between the mobile app and the BFF. Hermes shapes mirror
 // gateway/platforms/api_server*.py (Hermes Agent v0.22.0).
 
+/** One entry of an assistant row's `tool_calls` (OpenAI shape; `arguments` is a JSON string). */
+export type ToolCall = {
+  id: string;
+  call_id?: string | null;
+  type?: string;
+  function: { name: string; arguments?: string | null };
+};
+
 export type SessionMessage = {
+  /** Durable row id (integer autoincrement in Hermes): newer rows have larger ids. */
   id?: string | number;
+  session_id?: string;
   role: 'user' | 'assistant' | 'system' | 'tool';
   content: string | null;
   timestamp?: number | string | null;
   tool_name?: string | null;
+  /** On a `role=tool` row: the `ToolCall.id` it answers. */
+  tool_call_id?: string | null;
+  /** On an assistant row: the tools it asked for, persisted before they run. */
+  tool_calls?: ToolCall[] | null;
+  finish_reason?: string | null;
+  /** Display hint; `hidden` rows are model-facing scaffolding no surface paints. */
+  display_kind?: string | null;
+};
+
+/** GET /bots/:bot/chat/messages paging, passed through to Hermes (which answers its latest page when omitted). */
+export type BotChatMessagesQuery = { offset?: number; limit?: number; order?: 'oldest' | 'latest' };
+
+export type BotChatMessagesResponse = {
+  object?: 'list';
+  session_id: string;
+  /** Chronological (oldest first) in both orders. */
+  data: SessionMessage[];
+  pagination?: { limit: number; offset: number; order: 'oldest' | 'latest'; returned: number };
 };
 
 export type BotSummary = {

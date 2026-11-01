@@ -5,6 +5,7 @@ import {
   checkHealth,
   followBotRun,
   getBotChat,
+  getBotChatMessages,
   getBotMessages,
   listBots,
   sendBotMessage,
@@ -89,6 +90,22 @@ describe('Bot client', () => {
 
     await expect(getBotMessages('researcher', 'chat 1')).resolves.toEqual([{ role: 'user', content: 'hi' }]);
     expect(fetchMock.mock.calls[0][0]).toBe('http://bff.local:8787/sessions/chat%201/messages?bot=researcher');
+  });
+
+  it('pages the Bot Chat through GET /bots/:bot/chat/messages; the BFF resolves the chat', async () => {
+    respond(200, { session_id: 'chat-1', data: [{ id: 9, role: 'tool', content: 'ok', tool_call_id: 'call_1' }] });
+
+    await expect(getBotChatMessages('research bot', { order: 'latest', limit: 100 })).resolves.toEqual([
+      { id: 9, role: 'tool', content: 'ok', tool_call_id: 'call_1' },
+    ]);
+    expect(fetchMock.mock.calls[0][0]).toBe('http://bff.local:8787/bots/research%20bot/chat/messages?order=latest&limit=100');
+  });
+
+  it('sends no query string when no paging is given', async () => {
+    respond(200, { session_id: 'chat-1', data: [] });
+
+    await getBotChatMessages('default');
+    expect(fetchMock.mock.calls[0][0]).toBe('http://bff.local:8787/bots/default/chat/messages');
   });
 });
 

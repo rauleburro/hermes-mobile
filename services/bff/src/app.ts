@@ -39,6 +39,31 @@ const APPROVAL_CHOICES: readonly ApprovalChoice[] = ['once', 'session', 'always'
 
 class UnknownBotError extends Error {}
 
+type MessagesParams = { offset?: string; limit?: string; order?: 'oldest' | 'latest' };
+const MAX_MESSAGES_PAGE = 500;
+const isDigits = (v: string) => /^\d+$/.test(v);
+
+/** Validates GET /bots/:bot/chat/messages paging; only the params given are forwarded to Hermes. */
+function parseMessagesQuery(query: Record<string, string>): MessagesParams | { error: string } {
+  const { offset, limit, order } = query;
+  const out: MessagesParams = {};
+  if (offset !== undefined) {
+    if (!isDigits(offset) || !Number.isSafeInteger(Number(offset))) return { error: 'offset must be a non-negative integer' };
+    out.offset = offset;
+  }
+  if (limit !== undefined) {
+    if (!isDigits(limit) || Number(limit) < 1 || Number(limit) > MAX_MESSAGES_PAGE) {
+      return { error: `limit must be an integer from 1 to ${MAX_MESSAGES_PAGE}` };
+    }
+    out.limit = limit;
+  }
+  if (order !== undefined) {
+    if (order !== 'oldest' && order !== 'latest') return { error: 'order must be oldest or latest' };
+    out.order = order;
+  }
+  return out;
+}
+
 export function createApp({
   hermesUrl,
   hermesApiKey,
@@ -146,6 +171,19 @@ export function createApp({
     const chat = await findBotChat(bot);
     if ('error' in chat) return chat.error;
     return c.json<BotChatResponse>({ botId: bot, sessionId: chat.sessionId });
+  });
+
+  // A page of the Bot's Bot Chat, resolved here (Bot Mode: the app never names a session). The app
+  // polls it while a turn runs, since Bot Chat runs stream only their final event.
+  app.get('/bots/:bot/chat/messages', async (c) => {
+    const bot = c.req.param('bot');
+    const params = parseMessagesQuery(c.req.query());
+    if ('error' in params) return c.json({ error: 'invalid_params', message: params.error }, 400);
+    if (!keyFor(bot)) throw new UnknownBotError(bot);
+    const chat = await findBotChat(bot);
+    if ('error' in chat) return chat.error;
+    const query = new URLSearchParams({ inline_images: 'false', ...params });
+    return hermes(`/api/sessions/${encodeURIComponent(chat.sessionId)}/messages?${query}`, {}, bot).then(relay);
   });
 
   // Sends to the Bot's Bot Chat, resolved here: the app never picks a session (Bot Mode).

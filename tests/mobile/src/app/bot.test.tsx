@@ -1,22 +1,42 @@
-import type { RunEvent } from '@hermes-mobile/api';
-import { render, screen, userEvent, waitFor } from '@testing-library/react-native';
+import type { RunEvent, SessionMessage } from '@hermes-mobile/api';
+import { act, render, screen, userEvent, waitFor } from '@testing-library/react-native';
 import { Alert } from 'react-native';
 import BotChatScreen from '@mobile/app/bot/[botId]';
-import { BffError, followBotRun, getBotChat, getBotMessages, sendBotMessage, stopBotRun } from '@mobile/lib/bff';
+import {
+  BffError,
+  followBotRun,
+  getBotChat,
+  getBotChatMessages,
+  getBotMessages,
+  sendBotMessage,
+  stopBotRun,
+} from '@mobile/lib/bff';
+import { buildChatItems } from '@mobile/lib/chatItems';
+import { TURN_POLL_MAX_INTERVAL_MS, TURN_POLL_MAX_MS, TURN_POLL_MS } from '@mobile/lib/useTurnPolling';
 
 jest.mock('expo-router', () => ({
   // Render the header's Stop button so tests can press it.
   Stack: { Screen: ({ options }: { options?: { headerRight?: () => unknown } }) => options?.headerRight?.() ?? null },
   useLocalSearchParams: () => ({ botId: 'default', name: 'Hermes' }),
   useTheme: () => ({ colors: { text: 'black', border: 'gray', notification: 'red', card: 'white', primary: 'blue' } }),
+  // Always focused here; focus and blur handling is covered by the useTurnPolling tests.
+  useFocusEffect: (effect: () => void | (() => void)) => jest.requireActual<typeof import('react')>('react').useEffect(effect, [effect]),
 }));
-jest.mock('expo-crypto', () => ({ randomUUID: () => 'client-msg-1' }));
+// Each send gets a new id (client-msg-1, -2, …); a resend reuses its message's id.
+let mockUuid = 0;
+jest.mock('expo-crypto', () => ({ randomUUID: () => `client-msg-${++mockUuid}` }));
+// The real builder, spied on, to check the chat isn't rebuilt on every Working tick.
+jest.mock('@mobile/lib/chatItems', () => {
+  const actual = jest.requireActual('@mobile/lib/chatItems');
+  return { ...actual, buildChatItems: jest.fn(actual.buildChatItems) };
+});
 jest.mock('@mobile/lib/bff', () => {
   const actual = jest.requireActual('@mobile/lib/bff');
   return {
     BffError: actual.BffError,
     getBotChat: jest.fn(),
     getBotMessages: jest.fn(),
+    getBotChatMessages: jest.fn(),
     sendBotMessage: jest.fn(),
     followBotRun: jest.fn(),
     stopBotRun: jest.fn(),
@@ -40,6 +60,7 @@ function controllableRun() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockUuid = 0;
   jest.mocked(getBotChat).mockResolvedValue({ botId: 'default', sessionId: 'chat-default' });
   jest.mocked(getBotMessages).mockResolvedValue([
     { role: 'user', content: 'earlier question' },
@@ -48,6 +69,7 @@ beforeEach(() => {
   ]);
   jest.mocked(sendBotMessage).mockResolvedValue({ runId: 'run-1', replayed: false });
   jest.mocked(stopBotRun).mockResolvedValue({});
+  jest.mocked(getBotChatMessages).mockResolvedValue([]);
 });
 
 async function send(text: string) {
@@ -381,5 +403,320 @@ describe('BotChatScreen', () => {
     await userEvent.setup().press(await screen.findByRole('button', { name: 'Stop' }));
 
     expect(await screen.findByText('Stop failed: POST stop failed (502)')).toBeOnTheScreen();
+  });
+});
+
+const clockCall = (id = 'call_a') => ({ id, call_id: id, type: 'function', function: { name: 'clock', arguments: '{"tz":"UTC"}' } });
+const earlier: SessionMessage[] = [
+  { id: 1, role: 'user', content: 'earlier question' },
+  { id: 2, role: 'assistant', content: 'earlier answer', finish_reason: 'stop' },
+];
+// Hermes stores the user's Bot Chat message as internal_notification: it must stay visible.
+const turnUser: SessionMessage = { id: 10, role: 'user', content: '[e2e] time?', display_kind: 'internal_notification' };
+const turnCall: SessionMessage = { id: 11, role: 'assistant', content: '', tool_calls: [clockCall()], finish_reason: 'tool_calls' };
+const turnResult: SessionMessage = { id: 12, role: 'tool', content: '12:00 UTC', tool_call_id: 'call_a', tool_name: 'clock' };
+const turnAnswer: SessionMessage = { id: 13, role: 'assistant', content: 'E2E-TOOL 7', finish_reason: 'stop' };
+
+describe('BotChatScreen tool cards', () => {
+  it('renders tool calls from the history as completed cards and hides hidden rows', async () => {
+    jest.mocked(getBotMessages).mockResolvedValue([
+      { id: 5, role: 'user', content: '[System: scaffold]', display_kind: 'hidden' },
+      turnUser,
+      turnCall,
+      turnResult,
+      turnAnswer,
+    ]);
+    await render(<BotChatScreen />);
+
+    const card = await screen.findByRole('button', { name: 'Tool clock, tz: UTC, done' });
+    expect(screen.getByText('tz: UTC')).toBeOnTheScreen();
+    expect(screen.getByText('E2E-TOOL 7')).toBeOnTheScreen();
+    expect(screen.queryByText('[System: scaffold]')).toBeNull();
+    expect(screen.queryByText('12:00 UTC')).toBeNull();
+
+    await userEvent.setup().press(card);
+    expect(screen.getByText('12:00 UTC')).toBeOnTheScreen();
+  });
+
+  describe('while a turn is pending', () => {
+    beforeEach(() => {
+      jest.useFakeTimers();
+      jest.mocked(getBotMessages).mockResolvedValue(earlier);
+    });
+    afterEach(() => jest.useRealTimers());
+
+    const poll = () => act(async () => jest.advanceTimersByTime(TURN_POLL_MS));
+    async function sendWithTimers(text: string) {
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+      await user.type(await screen.findByPlaceholderText('Message Hermes'), text);
+      await user.press(screen.getByRole('button', { name: 'Send' }));
+    }
+
+    it('polls the Bot Chat and shows a running card, then done when its result row arrives', async () => {
+      controllableRun();
+      await render(<BotChatScreen />);
+      await sendWithTimers('[e2e] time?');
+      expect(getBotChatMessages).not.toHaveBeenCalled();
+
+      jest.mocked(getBotChatMessages).mockResolvedValue([...earlier, turnUser, turnCall]);
+      await poll();
+
+      expect(getBotChatMessages).toHaveBeenCalledWith('default', { order: 'latest', limit: 100 });
+      expect(await screen.findByLabelText('Tool clock, tz: UTC, running')).toBeOnTheScreen();
+      expect(screen.getByTestId('tool-spinner')).toBeOnTheScreen();
+      expect(screen.getAllByText('[e2e] time?')).toHaveLength(1);
+      expect(screen.getByText(/Working…/)).toBeOnTheScreen();
+
+      jest.mocked(getBotChatMessages).mockResolvedValue([...earlier, turnUser, turnCall, turnResult]);
+      await poll();
+
+      expect(await screen.findByRole('button', { name: 'Tool clock, tz: UTC, done' })).toBeOnTheScreen();
+      expect(screen.queryByTestId('tool-spinner')).toBeNull();
+      expect(screen.getAllByText('earlier answer')).toHaveLength(1);
+    });
+
+    it('stops polling when the run completes', async () => {
+      const finish = controllableRun();
+      await render(<BotChatScreen />);
+      await sendWithTimers('[e2e] time?');
+      await poll();
+      expect(getBotChatMessages).toHaveBeenCalledTimes(1);
+
+      jest.mocked(getBotMessages).mockResolvedValue([...earlier, turnUser, turnCall, turnResult, turnAnswer]);
+      await act(async () => finish({ event: 'run.completed', run_id: 'run-1', timestamp: 1, output: 'E2E-TOOL 7' }));
+      await act(async () => jest.advanceTimersByTime(TURN_POLL_MS * 4));
+
+      expect(getBotChatMessages).toHaveBeenCalledTimes(1);
+      expect(screen.queryByText(/Working…/)).toBeNull();
+    });
+
+    it('shows the final answer once when the poll sees it before run.completed', async () => {
+      const finish = controllableRun();
+      await render(<BotChatScreen />);
+      await sendWithTimers('[e2e] time?');
+      jest.mocked(getBotChatMessages).mockResolvedValue([...earlier, turnUser, turnCall, turnResult, turnAnswer]);
+      await poll();
+      expect(await screen.findByText('E2E-TOOL 7')).toBeOnTheScreen();
+
+      // The end-of-turn reload is slow: the event must not add a second copy meanwhile.
+      jest.mocked(getBotMessages).mockReturnValue(new Promise(() => {}));
+      await act(async () => finish({ event: 'run.completed', run_id: 'run-1', timestamp: 1, output: 'E2E-TOOL 7' }));
+
+      expect(screen.getAllByText('E2E-TOOL 7')).toHaveLength(1);
+      expect(screen.getAllByText('[e2e] time?')).toHaveLength(1);
+    });
+
+    it('does not take interim text next to a tool call for the final answer', async () => {
+      const finish = controllableRun();
+      await render(<BotChatScreen />);
+      await sendWithTimers('[e2e] time?');
+      jest.mocked(getBotChatMessages).mockResolvedValue([
+        ...earlier,
+        turnUser,
+        { ...turnCall, content: 'Checking the clock.' },
+      ]);
+      await poll();
+      await screen.findByText('Checking the clock.');
+
+      jest.mocked(getBotMessages).mockReturnValue(new Promise(() => {}));
+      await act(async () => finish({ event: 'run.completed', run_id: 'run-1', timestamp: 1, output: 'E2E-TOOL 7' }));
+
+      expect(await screen.findByText('E2E-TOOL 7')).toBeOnTheScreen();
+    });
+
+    /** A stream that never ends by itself (half-open connection); it only returns when aborted. */
+    function hangingRun(events: RunEvent[] = []) {
+      let signal: AbortSignal | undefined;
+      jest.mocked(followBotRun).mockImplementation((_b, _r, onEvent, s) => {
+        signal = s;
+        events.forEach(onEvent);
+        return new Promise<void>((resolve) => s.addEventListener('abort', () => resolve()));
+      });
+      return () => signal;
+    }
+
+    it('ends the turn once a poll brings its final answer, even if the stream never ends', async () => {
+      const signal = hangingRun();
+      await render(<BotChatScreen />);
+      await sendWithTimers('[e2e] time?');
+      jest.mocked(getBotChatMessages).mockResolvedValue([...earlier, turnUser, turnCall, turnResult, turnAnswer]);
+      jest.mocked(getBotMessages).mockResolvedValue([...earlier, turnUser, turnCall, turnResult, turnAnswer]);
+
+      await poll();
+
+      await waitFor(() => expect(screen.queryByText(/Working…/)).toBeNull());
+      expect(signal()!.aborted).toBe(true);
+      expect(screen.getAllByText('E2E-TOOL 7')).toHaveLength(1);
+      expect(screen.getAllByText('[e2e] time?')).toHaveLength(1);
+      expect(screen.queryByText(/Lost track/)).toBeNull();
+      await waitFor(() => expect(getBotMessages).toHaveBeenCalledTimes(2));
+      const polls = jest.mocked(getBotChatMessages).mock.calls.length;
+      await act(async () => jest.advanceTimersByTime(TURN_POLL_MS * 4));
+      expect(getBotChatMessages).toHaveBeenCalledTimes(polls);
+    });
+
+    it("never takes an earlier turn's answer for this one (its rows can arrive late after a failed reload)", async () => {
+      const finish = controllableRun();
+      await render(<BotChatScreen />);
+      await sendWithTimers('[e2e] time?');
+      // The previous turn's rows show up first; this turn's user row is not stored yet.
+      jest.mocked(getBotChatMessages).mockResolvedValue([
+        ...earlier,
+        { id: 7, role: 'user', content: 'older question' },
+        { id: 8, role: 'assistant', content: 'older answer', finish_reason: 'stop' },
+      ]);
+      await poll();
+      await screen.findByText('older answer');
+
+      expect(screen.getByText(/Working…/)).toBeOnTheScreen();
+      await poll();
+      expect(getBotChatMessages).toHaveBeenCalledTimes(2);
+
+      jest.mocked(getBotMessages).mockReturnValue(new Promise(() => {}));
+      await act(async () => finish({ event: 'run.completed', run_id: 'run-1', timestamp: 1, output: 'E2E-TOOL 7' }));
+      expect(await screen.findByText('E2E-TOOL 7')).toBeOnTheScreen();
+    });
+
+    it.each([
+      ['run.completed', { event: 'run.completed', run_id: 'run-1', timestamp: 1, output: 'done' }],
+      ['run.failed', { event: 'run.failed', run_id: 'run-1', timestamp: 1, error: 'boom' }],
+    ] as const)('stops polling on %s even while the stream stays open', async (_name, event) => {
+      hangingRun([event as RunEvent]);
+      await render(<BotChatScreen />);
+      await sendWithTimers('[e2e] time?');
+
+      await act(async () => jest.advanceTimersByTime(TURN_POLL_MS * 4));
+
+      expect(getBotChatMessages).not.toHaveBeenCalled();
+    });
+
+    it('gives up after the polling cap: ends the turn and offers a refresh', async () => {
+      const signal = hangingRun();
+      await render(<BotChatScreen />);
+      await sendWithTimers('[e2e] time?');
+
+      await act(async () => jest.advanceTimersByTime(TURN_POLL_MAX_MS + TURN_POLL_MAX_INTERVAL_MS));
+
+      expect(await screen.findByText(/Lost track of the reply/)).toBeOnTheScreen();
+      expect(screen.getByRole('button', { name: 'Refresh' })).toBeOnTheScreen();
+      expect(screen.queryByText(/Working…/)).toBeNull();
+      expect(signal()!.aborted).toBe(true);
+    });
+
+    // Turn N as Hermes stored it: its user row is the same text the next turn sends.
+    const turnN: SessionMessage[] = [
+      { id: 3, role: 'user', content: 'continue', display_kind: 'internal_notification' },
+      { id: 4, role: 'assistant', content: 'answer N', finish_reason: 'stop' },
+    ];
+
+    /** Turn N completes but its end-of-turn reload fails, leaving the shown rows stale. */
+    async function turnWithFailedReload() {
+      const finish = controllableRun();
+      await render(<BotChatScreen />);
+      await sendWithTimers('continue');
+      jest.mocked(getBotMessages).mockRejectedValueOnce(new Error('reload failed (502)'));
+      await act(async () => finish({ event: 'run.completed', run_id: 'run-1', timestamp: 1, output: 'answer N' }));
+      expect(await screen.findByText(/Couldn't refresh the Bot Chat/)).toBeOnTheScreen();
+    }
+
+    it('says so when the end-of-turn reload fails, and Refresh clears it', async () => {
+      await turnWithFailedReload();
+      expect(screen.getByText('answer N')).toBeOnTheScreen();
+      jest.mocked(getBotMessages).mockResolvedValue([...earlier, ...turnN]);
+
+      await userEvent.setup({ advanceTimers: jest.advanceTimersByTime }).press(screen.getByRole('button', { name: 'Refresh' }));
+
+      await waitFor(() => expect(screen.queryByText(/Couldn't refresh the Bot Chat/)).toBeNull());
+      expect(screen.getAllByText('answer N')).toHaveLength(1);
+    });
+
+    it('reloads stale rows before the next turn, so an identical prompt never ends on the previous answer', async () => {
+      await turnWithFailedReload();
+      jest.mocked(getBotMessages).mockResolvedValue([...earlier, ...turnN]);
+      controllableRun();
+      await sendWithTimers('continue');
+      await waitFor(() => expect(getBotMessages).toHaveBeenCalledTimes(3));
+
+      // Turn N+1's user row is not stored yet (Hermes writes it at its first flush): the poll only has turn N.
+      jest.mocked(getBotChatMessages).mockResolvedValue([...earlier, ...turnN]);
+      await poll();
+      await poll();
+
+      expect(screen.getByText(/Working…/)).toBeOnTheScreen();
+      expect(screen.getAllByText('continue')).toHaveLength(2);
+      expect(screen.getAllByText('answer N')).toHaveLength(1);
+    });
+
+    it('when the rows are still stale, lets only the stream or the cap end the next turn', async () => {
+      await turnWithFailedReload();
+      jest.mocked(getBotMessages).mockRejectedValue(new Error('still down'));
+      const finish = controllableRun();
+      await sendWithTimers('continue');
+      await waitFor(() => expect(getBotMessages).toHaveBeenCalledTimes(3));
+
+      jest.mocked(getBotChatMessages).mockResolvedValue([...earlier, ...turnN]);
+      await poll();
+      await poll();
+      expect(screen.getByText(/Working…/)).toBeOnTheScreen();
+
+      await act(async () => finish({ event: 'run.completed', run_id: 'run-1', timestamp: 1, output: 'answer N+1' }));
+      expect(await screen.findByText('answer N+1')).toBeOnTheScreen();
+      expect(screen.queryByText(/Working…/)).toBeNull();
+    });
+
+    it('treats the rows as stale while the end-of-turn reload is in flight, so an identical prompt sent meanwhile never ends on the previous answer', async () => {
+      const finish = controllableRun();
+      await render(<BotChatScreen />);
+      await sendWithTimers('continue');
+      // Turn N's end-of-turn reload hangs; the composer is free again meanwhile.
+      let landReload: (rows: SessionMessage[]) => void = () => {};
+      jest.mocked(getBotMessages).mockImplementationOnce(() => new Promise((resolve) => (landReload = resolve)));
+      await act(async () => finish({ event: 'run.completed', run_id: 'run-1', timestamp: 1, output: 'answer N' }));
+      await waitFor(() => expect(getBotMessages).toHaveBeenCalledTimes(2));
+      expect(screen.queryByText(/Working…/)).toBeNull();
+
+      jest.mocked(getBotMessages).mockResolvedValue([...earlier, ...turnN]);
+      // A stream that only ends on abort: the poll is what could end this turn early.
+      const signal = hangingRun();
+      await sendWithTimers('continue');
+      jest.mocked(getBotChatMessages).mockResolvedValue([...earlier, ...turnN]);
+      await poll();
+      await poll();
+      await act(async () => landReload([...earlier, ...turnN]));
+      await poll();
+
+      expect(screen.getByText(/Working…/)).toBeOnTheScreen();
+      expect(signal()!.aborted).toBe(false);
+    });
+
+    it('renders a final reply delivered by the poll as Markdown, and Send works again once the turn ended', async () => {
+      hangingRun();
+      await render(<BotChatScreen />);
+      await sendWithTimers('[e2e] time?');
+      const reply: SessionMessage = { id: 13, role: 'assistant', content: '## Done\n\n**E2E-OK**', finish_reason: 'stop' };
+      jest.mocked(getBotChatMessages).mockResolvedValue([...earlier, turnUser, reply]);
+      jest.mocked(getBotMessages).mockResolvedValue([...earlier, turnUser, reply]);
+
+      await poll();
+
+      expect(await screen.findByRole('header', { name: 'Done' })).toBeOnTheScreen();
+      expect(screen.queryByText(/\*\*E2E-OK\*\*/)).toBeNull();
+      await waitFor(() => expect(screen.queryByText(/Working…/)).toBeNull());
+      await userEvent.setup({ advanceTimers: jest.advanceTimersByTime }).type(screen.getByPlaceholderText('Message Hermes'), 'next');
+      expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
+    });
+
+    it('does not rebuild the chat items on the once-a-second Working tick', async () => {
+      controllableRun();
+      await render(<BotChatScreen />);
+      await sendWithTimers('[e2e] time?');
+      await screen.findByText('Working… 0s');
+      const before = jest.mocked(buildChatItems).mock.calls.length;
+
+      await act(async () => jest.advanceTimersByTime(1000));
+
+      expect(screen.getByText('Working… 1s')).toBeOnTheScreen();
+      expect(buildChatItems).toHaveBeenCalledTimes(before);
+    });
   });
 });
