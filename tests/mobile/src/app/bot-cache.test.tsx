@@ -18,6 +18,7 @@ jest.mock('@mobile/lib/bff', () => {
   const actual = jest.requireActual('@mobile/lib/bff');
   return {
     BffError: actual.BffError,
+    REQUEST_TIMEOUT_MS: actual.REQUEST_TIMEOUT_MS,
     getBotChat: jest.fn(),
     getBotMessages: jest.fn(),
     getBotChatMessages: jest.fn(),

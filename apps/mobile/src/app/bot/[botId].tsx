@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { MessageBubble, type MessageRole } from '@/components/MessageBubble';
 import { ToolCard } from '@/components/ToolCard';
-import { BffError, followBotRun, getBotChat, getBotMessages, sendBotMessage, stopBotRun } from '@/lib/bff';
+import { BffError, followBotRun, getBotChat, getBotMessages, REQUEST_TIMEOUT_MS, sendBotMessage, stopBotRun } from '@/lib/bff';
 import { dropChat, readChat, savedDataHint, writeChat } from '@/lib/cache';
 import { buildChatItems, isFinalAnswer, maxRowId, mergeRows, type ChatItem } from '@/lib/chatItems';
 import { loadConfig, pairedUrl } from '@/lib/config';
@@ -258,10 +258,13 @@ export default function BotChatScreen() {
     }
   }, []);
 
-  /** Reloads the Bot Chat; pending lines it now holds are dropped (see dropDelivered). */
+  /**
+   * Reloads the Bot Chat; pending lines it now holds are dropped (see dropDelivered). Rows are on
+   * screen already, so it takes the default timeout, not the first load's (HISTORY_TIMEOUT_MS).
+   */
   async function reconcile(sessionId: string) {
     const bff = await currentBff();
-    const messages = await getBotMessages(botId, sessionId);
+    const messages = await getBotMessages(botId, sessionId, { timeoutMs: REQUEST_TIMEOUT_MS });
     if (bff) writeChat(bff, botId, sessionId, messages);
     setFreshness('fresh');
     showRows(messages);
