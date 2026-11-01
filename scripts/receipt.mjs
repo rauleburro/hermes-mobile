@@ -10,8 +10,9 @@
 // Usage:
 //   node scripts/receipt.mjs stamp
 //   node scripts/receipt.mjs check [<commit-ish>]   (default HEAD)
+//   node scripts/receipt.mjs pre-push               (git pre-push hook: ref lines on stdin)
 
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { git } from "./git.mjs";
 
@@ -100,10 +101,60 @@ export function check(cwd, rev = "HEAD") {
   return { ok: true, message: `OK: ${rev} is validated (tree ${tree.slice(0, 12)}).` };
 }
 
+const ZERO_SHA = /^0+$/;
+
+/**
+ * Parse git's pre-push stdin: `<local ref> <local sha> <remote ref> <remote sha>` per line.
+ * @param {string} input
+ */
+export function parsePushRefs(input) {
+  return input
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      const parts = l.split(/\s+/);
+      if (parts.length !== 4) throw new Error(`Unexpected pre-push input line: "${l}"`);
+      const [localRef, localSha, remoteRef, remoteSha] = /** @type {[string, string, string, string]} */ (parts);
+      return { localRef, localSha, remoteRef, remoteSha };
+    });
+}
+
+/**
+ * Receipt check for every ref being pushed (the local sha, not HEAD).
+ * A zero LOCAL sha is a deletion and is skipped; a zero remote sha is a new
+ * branch and is checked like any other.
+ * @param {string} cwd
+ * @param {string} input git's pre-push stdin
+ * @returns {{ok: boolean, messages: string[]}}
+ */
+export function checkPush(cwd, input) {
+  let refs;
+  try {
+    refs = parsePushRefs(input);
+  } catch (err) {
+    return { ok: false, messages: [err instanceof Error ? err.message : String(err)] };
+  }
+  /** @type {string[]} */
+  const messages = [];
+  for (const { localRef, localSha } of refs) {
+    if (ZERO_SHA.test(localSha)) continue;
+    const result = check(cwd, localSha);
+    if (!result.ok) messages.push(`${localRef}: ${result.message}`);
+  }
+  return { ok: messages.length === 0, messages };
+}
+
 /** @param {string[]} argv */
 function main(argv) {
   const [command, rev] = argv;
   const cwd = process.cwd();
+  if (command === "pre-push") {
+    // lefthook/git may append <remote> <url> arguments; they are not needed.
+    const result = checkPush(cwd, readFileSync(0, "utf8"));
+    for (const m of result.messages) console.error(m);
+    return result.ok ? 0 : 1;
+  }
   if (command === "stamp" && argv.length === 1) {
     try {
       const tree = stamp(cwd);
