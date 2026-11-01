@@ -9,13 +9,25 @@ import { normalizeBffUrl, parsePairParams } from '@/lib/pairing';
 // The link only prefills the form: nothing is stored until the user taps Pair.
 export default function PairScreen() {
   const params = useLocalSearchParams<{ url?: string | string[]; token?: string | string[] }>();
-  const link = useMemo(() => parsePairParams({ url: params.url, token: params.token }), [params.url, params.token]);
+  // Memoize on the first values (strings), so a repeated param's new array each render doesn't refill the form.
+  const rawUrl = [params.url].flat()[0];
+  const rawToken = [params.token].flat()[0];
+  const link = useMemo(() => parsePairParams({ url: rawUrl, token: rawToken }), [rawUrl, rawToken]);
   const { colors } = useTheme();
   const [url, setUrl] = useState(link.url ?? '');
   const [token, setToken] = useState(link.token ?? '');
   const [stored, setStored] = useState<BffConfig | null>(null);
   const [status, setStatus] = useState<string | null>(link.error ?? null);
   const [busy, setBusy] = useState(false);
+
+  // A link opened while this screen is already showing only changes the params: refill the form.
+  const [shownLink, setShownLink] = useState(link);
+  if (link !== shownLink) {
+    setShownLink(link);
+    if (link.url) setUrl(link.url);
+    if (link.token) setToken(link.token);
+    setStatus(link.error ?? null);
+  }
 
   useEffect(() => {
     loadConfig().then((c) => {

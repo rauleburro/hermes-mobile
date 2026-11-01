@@ -159,6 +159,17 @@ describe('PairScreen opened from the pairing link (hermesmobile://pair?url=…&t
     expect(tokenField()).toHaveDisplayValue('link-token');
   });
 
+  it('refills the form when a new link arrives while the screen is already open', async () => {
+    await render(<PairScreen />);
+    expect(urlField()).toHaveDisplayValue('');
+
+    mockParams.mockReturnValue({ url: 'http://localhost:8795/', token: 'link-token' });
+    await screen.rerender(<PairScreen />);
+
+    expect(urlField()).toHaveDisplayValue('http://localhost:8795');
+    expect(tokenField()).toHaveDisplayValue('link-token');
+  });
+
   it('shows the stored pairing when opened without a link', async () => {
     mockedLoadConfig.mockResolvedValue({ url: 'http://old.local:8787', token: 'old-token' });
     await render(<PairScreen />);
