@@ -1,4 +1,4 @@
-// Parsing for the pairing link `hermesmobile://pair?url=<bff-url>&token=<device-token>`
+// Parsing for the pairing link `<scheme>://pair?url=<bff-url>&token=<device-token>` (any scheme: expo-router routes on `pair`)
 // (the QR printed by `pnpm pair` in services/bff) and for URLs typed by hand.
 
 type Param = string | string[] | undefined;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pairingLink, pairingUrl } from '../src/pairing.ts';
+import { appScheme, pairingLink, pairingUrl } from '../src/pairing.ts';
 
 describe('pairingUrl', () => {
   it('uses --url when given (adb reverse, Tailscale, a reverse proxy), without trailing slash', () => {
@@ -29,4 +29,29 @@ describe('pairingLink', () => {
       'hermesmobile://pair?url=http%3A%2F%2Flocalhost%3A8787&token=a%2Bb%2Fc%3D',
     );
   });
+
+  it('uses a custom scheme for a fork build', () => {
+    expect(pairingLink('http://localhost:8787', 'tok', 'forkbots')).toBe(
+      'forkbots://pair?url=http%3A%2F%2Flocalhost%3A8787&token=tok',
+    );
+  });
+});
+
+describe('appScheme', () => {
+  it('defaults to the official scheme when APP_SCHEME is unset or blank', () => {
+    expect(appScheme(undefined)).toBe('hermesmobile');
+    expect(appScheme('  ')).toBe('hermesmobile');
+  });
+
+  it('returns the trimmed custom scheme', () => {
+    expect(appScheme(' forkbots ')).toBe('forkbots');
+    expect(appScheme('fork-bots.v2+x')).toBe('fork-bots.v2+x');
+  });
+
+  it.each(['Bad_Scheme', 'ForkBots', '1fork', 'a://b', 'has space', 'http', 'https'])(
+    'rejects APP_SCHEME=%s like the app config does',
+    (scheme) => {
+      expect(() => appScheme(scheme)).toThrow(/APP_SCHEME/);
+    },
+  );
 });
