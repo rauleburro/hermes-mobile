@@ -5,7 +5,8 @@
     "types": ["jest"],
     "paths": {
       "@mobile/*": ["../../apps/mobile/src/*"],
-      "@/*": ["../../apps/mobile/src/*"]
+      "@/*": ["../../apps/mobile/src/*"],
+      "@/assets/*": ["../../apps/mobile/assets/*"]
     }
   },
   "include": ["src", "jest.config.js"]
