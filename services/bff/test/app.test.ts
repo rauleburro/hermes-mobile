@@ -384,6 +384,7 @@ describe('per-Bot run routes', () => {
     const { app, fetchMock } = setup(() => Response.json({}));
     const res = await app.request(path, { method, headers: auth });
     expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ error: 'bot_unreachable' });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
