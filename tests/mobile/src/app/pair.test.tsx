@@ -1,4 +1,4 @@
-import { render, screen, userEvent } from '@testing-library/react-native';
+import { act, render, screen, userEvent, waitFor } from '@testing-library/react-native';
 import { router } from 'expo-router';
 import PairScreen from '@mobile/app/pair';
 import { checkHealth } from '@mobile/lib/bff';
@@ -178,4 +178,91 @@ describe('PairScreen opened from the pairing link (hermesmobile://pair?url=…&t
     expect(tokenField()).toHaveDisplayValue('old-token');
     expect(screen.queryByText(/replaces the current BFF/)).toBeNull();
   });
+
+  it('reuses the stored token when the link points at the stored BFF', async () => {
+    mockParams.mockReturnValue({ url: 'http://old.local:8787/' });
+    mockedLoadConfig.mockResolvedValue({ url: 'http://old.local:8787', token: 'old-token' });
+    await render(<PairScreen />);
+
+    expect(await screen.findByDisplayValue('old-token')).toBeOnTheScreen();
+  });
 });
+
+describe('PairScreen never sends the stored token to another BFF', () => {
+  const stored = { url: 'http://old.local:8787', token: 'old-token' };
+
+  it('leaves the token empty for a URL-only link to another host, so Pair stays disabled', async () => {
+    mockParams.mockReturnValue({ url: 'https://attacker.example' });
+    mockedLoadConfig.mockResolvedValue(stored);
+    await render(<PairScreen />);
+    await waitFor(() => expect(mockedLoadConfig).toHaveBeenCalled());
+    await act(async () => {});
+
+    expect(urlField()).toHaveDisplayValue('https://attacker.example');
+    expect(tokenField()).toHaveDisplayValue('');
+    expect(screen.getByRole('button', { name: 'Pair' })).toBeDisabled();
+    expect(mockedCheckHealth).not.toHaveBeenCalled();
+  });
+
+  it('clears the stored token when a URL-only link to another host arrives while the screen is open', async () => {
+    mockedLoadConfig.mockResolvedValue(stored);
+    await render(<PairScreen />);
+    expect(await screen.findByDisplayValue('old-token')).toBeOnTheScreen();
+
+    mockParams.mockReturnValue({ url: 'https://attacker.example' });
+    await screen.rerender(<PairScreen />);
+
+    expect(urlField()).toHaveDisplayValue('https://attacker.example');
+    expect(tokenField()).toHaveDisplayValue('');
+    expect(screen.getByRole('button', { name: 'Pair' })).toBeDisabled();
+  });
+
+  it('refuses to send the stored token after the URL is edited to another host', async () => {
+    mockedLoadConfig.mockResolvedValue(stored);
+    await render(<PairScreen />);
+    expect(await screen.findByDisplayValue('old-token')).toBeOnTheScreen();
+
+    const user = userEvent.setup();
+    await user.clear(urlField());
+    await user.type(urlField(), 'https://attacker.example');
+    await user.press(screen.getByRole('button', { name: 'Pair' }));
+
+    expect(mockedCheckHealth).not.toHaveBeenCalled();
+    expect(screen.getByText('Enter the device token for this BFF (from `pnpm pair`).')).toBeOnTheScreen();
+  });
+
+  it('does not let a slow stored-config load overwrite a link that arrived meanwhile', async () => {
+    let resolveLoad: (c: typeof stored) => void = () => {};
+    mockedLoadConfig.mockReturnValueOnce(new Promise((r) => (resolveLoad = r)));
+    await render(<PairScreen />);
+
+    mockParams.mockReturnValue({ url: 'http://new.local:8787', token: 'link-token' });
+    await screen.rerender(<PairScreen />);
+    await act(async () => resolveLoad(stored));
+
+    expect(urlField()).toHaveDisplayValue('http://new.local:8787');
+    expect(tokenField()).toHaveDisplayValue('link-token');
+  });
+
+  it('says nothing about replacing when a token-only link keeps the same BFF', async () => {
+    mockParams.mockReturnValue({ token: 'link-token' });
+    mockedLoadConfig.mockResolvedValue(stored);
+    await render(<PairScreen />);
+    expect(await screen.findByDisplayValue('http://old.local:8787')).toBeOnTheScreen();
+
+    expect(screen.queryByText(/replaces the current BFF/)).toBeNull();
+  });
+
+  it('clears the URL when a link with an invalid URL arrives while the screen is open', async () => {
+    mockedLoadConfig.mockResolvedValue(stored);
+    await render(<PairScreen />);
+    expect(await screen.findByDisplayValue('http://old.local:8787')).toBeOnTheScreen();
+
+    mockParams.mockReturnValue({ url: 'javascript:alert(1)', token: 'link-token' });
+    await screen.rerender(<PairScreen />);
+
+    expect(screen.getByText('The pairing link has an invalid BFF URL.')).toBeOnTheScreen();
+    expect(urlField()).toHaveDisplayValue('');
+  });
+});
+

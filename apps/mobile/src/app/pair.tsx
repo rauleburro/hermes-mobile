@@ -16,6 +16,9 @@ export default function PairScreen() {
   const { colors } = useTheme();
   const [url, setUrl] = useState(link.url ?? '');
   const [token, setToken] = useState(link.token ?? '');
+  // True while the token field holds the STORED token (filled by the app, not typed or from a link).
+  // The stored token is only ever sent to the stored BFF.
+  const [tokenFromStore, setTokenFromStore] = useState(false);
   const [stored, setStored] = useState<BffConfig | null>(null);
   const [status, setStatus] = useState<string | null>(link.error ?? null);
   const [busy, setBusy] = useState(false);
@@ -24,23 +27,38 @@ export default function PairScreen() {
   const [shownLink, setShownLink] = useState(link);
   if (link !== shownLink) {
     setShownLink(link);
-    if (link.url) setUrl(link.url);
-    if (link.token) setToken(link.token);
     setStatus(link.error ?? null);
+    if (link.url || link.error) {
+      const reuse = !link.token && stored != null && link.url === stored.url;
+      setUrl(link.url ?? '');
+      setToken(link.token ?? (reuse ? stored.token : ''));
+      setTokenFromStore(reuse);
+    } else if (link.token) {
+      setToken(link.token);
+      setTokenFromStore(false);
+    }
   }
 
   useEffect(() => {
+    let ignore = false; // a later link re-runs this effect; drop the stale load
     loadConfig().then((c) => {
-      if (!c) return;
+      if (ignore || !c) return;
       setStored(c);
-      // Values from the link win; the stored pairing only fills what the link left out.
+      // Values from the link win; the stored pairing only fills what the link left out,
+      // and its token only when the URL is the stored BFF.
       if (!link.url && !link.error) setUrl(c.url);
-      if (!link.token) setToken(c.token);
+      if (!link.token && !link.error && (!link.url || link.url === c.url)) {
+        setToken(c.token);
+        setTokenFromStore(true);
+      }
     });
+    return () => {
+      ignore = true;
+    };
   }, [link]);
 
-  const replacing =
-    stored != null && ((link.url != null && link.url !== stored.url) || (link.token != null && link.token !== stored.token));
+  const fieldUrl = normalizeBffUrl(url);
+  const replacing = stored != null && fieldUrl != null && fieldUrl !== stored.url;
 
   async function pair() {
     setBusy(true);
@@ -49,6 +67,10 @@ export default function PairScreen() {
       const normalized = normalizeBffUrl(url);
       if (!normalized) {
         setStatus('Enter the BFF URL as http://host:port or https://host.');
+        return;
+      }
+      if (tokenFromStore && normalized !== stored?.url) {
+        setStatus('Enter the device token for this BFF (from `pnpm pair`).');
         return;
       }
       const config = { url: normalized, token: token.trim() };
@@ -69,7 +91,7 @@ export default function PairScreen() {
       <Text style={[styles.label, { color: colors.text }]}>BFF URL</Text>
       <TextInput style={input} value={url} onChangeText={setUrl} placeholder="http://192.168.1.10:8787" autoCapitalize="none" autoCorrect={false} keyboardType="url" />
       <Text style={[styles.label, { color: colors.text }]}>Device token</Text>
-      <TextInput style={input} value={token} onChangeText={setToken} placeholder="from `pnpm pair`" autoCapitalize="none" autoCorrect={false} secureTextEntry />
+      <TextInput style={input} value={token} onChangeText={(t) => (setToken(t), setTokenFromStore(false))} placeholder="from `pnpm pair`" autoCapitalize="none" autoCorrect={false} secureTextEntry />
       {replacing && <Text style={{ color: colors.text }}>Pairing replaces the current BFF ({stored?.url}).</Text>}
       {busy ? <ActivityIndicator /> : <Button title="Pair" onPress={pair} disabled={!url || !token} />}
       {status && <Text style={{ color: colors.notification }}>{status}</Text>}
