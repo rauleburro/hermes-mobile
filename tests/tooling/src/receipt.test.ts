@@ -117,6 +117,18 @@ describe("receipt in a throwaway repo", () => {
     expect(check(repo).ok).toBe(true);
   });
 
+  it("stamp then check agree when the message has a standalone --- paragraph", () => {
+    git(repo, "commit", "-q", "--allow-empty", "-m", "subject\n\nbody\n\n---\n\nfooter prose");
+    stamp(repo);
+    expect(check(repo).ok).toBe(true);
+  });
+
+  it("stamp throws when its own receipt does not check (writer and reader must agree)", () => {
+    // Repo trailer config can make interpret-trailers write nothing at all.
+    git(repo, "config", "trailer.ifmissing", "doNothing");
+    expect(() => stamp(repo)).toThrow(/receipt|check/i);
+  });
+
   it("a new commit after stamp is not validated", () => {
     stamp(repo);
     commitFile(repo, "b.txt", "x\n", "later");

@@ -57,13 +57,16 @@ export function stamp(cwd) {
   const message = git(cwd, ["log", "-1", "--format=%B", "HEAD"]);
   const stamped = git(
     cwd,
-    ["interpret-trailers", "--if-exists", "replace", "--trailer", `${TRAILER_KEY}: ${tree}`],
+    ["interpret-trailers", "--no-divider", "--if-exists", "replace", "--trailer", `${TRAILER_KEY}: ${tree}`],
     message,
   );
   // --allow-empty: the commit may legitimately be empty. --no-verify: no hook loops. verbatim: keep '#' lines of the original message.
   git(cwd, ["commit", "--amend", "--allow-empty", "--no-verify", "--cleanup=verbatim", "-q", "-F", "-"], stamped);
   const after = git(cwd, ["rev-parse", "HEAD^{tree}"]).trim();
   if (after !== tree) throw new Error("Internal error: stamping changed the tree.");
+  // The writer (interpret-trailers) and the reader (readTrailer) must agree.
+  const verified = check(cwd, "HEAD");
+  if (!verified.ok) throw new Error(`Internal error: the stamped receipt does not check: ${verified.message}`);
   return tree;
 }
 
