@@ -5,7 +5,8 @@ export type SseFrame = { id?: string; event?: string; data: string };
 export function createSseParser(onFrame: (frame: SseFrame) => void) {
   let buffer = '';
   return (chunk: string) => {
-    buffer += chunk.replace(/\r\n/g, '\n');
+    // Normalize the whole buffer so a CRLF pair split across chunks is still joined.
+    buffer = (buffer + chunk).replace(/\r\n/g, '\n');
     let end: number;
     while ((end = buffer.indexOf('\n\n')) !== -1) {
       const raw = buffer.slice(0, end);
