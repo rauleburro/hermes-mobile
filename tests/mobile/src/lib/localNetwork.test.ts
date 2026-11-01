@@ -108,6 +108,10 @@ describe('localNetworkHint', () => {
     expect(localNetworkHint('http://bff.local:8787', expoFetchError, android17)).toMatch(/Nearby devices/);
   });
 
+  it("also after React Native's own fetch timeout", () => {
+    expect(localNetworkHint('http://192.168.1.10:8787', new TypeError('Network request timed out'), android17)).toMatch(/Nearby devices/);
+  });
+
   it('also after a request timeout: a blocked local connection never answers, so the app gives up at 15 s', () => {
     const timeout = new BffError('GET /bots timed out', undefined, 'timeout');
 
@@ -119,6 +123,9 @@ describe('localNetworkHint', () => {
     ['the app is not paired', 'http://192.168.1.10:8787', new BffError('Not paired with a BFF'), android17],
     ['the request was aborted by the app', 'http://192.168.1.10:8787', new BffError('GET /bots aborted', undefined, 'aborted'), android17],
     ['a timeout carries an HTTP status', 'http://192.168.1.10:8787', new BffError('GET /bots failed (504)', 504, 'timeout'), android17],
+    ['secure storage failed to save the pairing', 'http://192.168.1.10:8787', new Error("Calling the 'setValueWithKeyAsync' function has failed"), android17],
+    ['a 200 answer was not JSON (captive portal, wrong port)', 'http://192.168.1.10:8787', new SyntaxError('JSON Parse error: Unexpected character: <'), android17],
+    ['the roster was malformed', 'http://192.168.1.10:8787', new TypeError("Cannot read property 'filter' of undefined"), android17],
     ['the address is loopback', 'http://localhost:8787', networkError, android17],
     ['the address is public', 'https://bff.example.com', networkError, android17],
     ['there is no URL', null, networkError, android17],

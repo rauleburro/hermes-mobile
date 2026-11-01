@@ -81,15 +81,22 @@ export async function ensureLocalNetworkAccess(
 }
 
 /**
- * Whether `error` means the BFF couldn't be reached: any failure that isn't a BffError (Expo's
- * global fetch rejects with a plain Error, "fetch failed: …", React Native's with a TypeError),
- * or the app's own request timeout (a BffError with code `timeout` and no HTTP status). Other
- * BffErrors mean the BFF answered, the app isn't paired, or the app aborted the request.
+ * How fetch rejects when the request never got an answer: Expo's global fetch (the app's since
+ * SDK 58) with a plain Error, "fetch failed: …"; React Native's with a TypeError, "Network
+ * request failed" or "Network request timed out".
+ */
+const FETCH_FAILURE = /^(fetch failed\b|Network request (failed|timed out)\b)/;
+
+/**
+ * Whether `error` means the BFF couldn't be reached: a fetch failure, or the app's own request
+ * timeout (a BffError with code `timeout` and no HTTP status). Other errors are not: a BffError
+ * means the BFF answered, the app isn't paired, or the app aborted the request; anything else
+ * (a 200 that isn't JSON, a malformed answer, secure storage) happened after the BFF answered
+ * or away from the network.
  */
 function isNetworkFailure(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  if (!(error instanceof BffError)) return true;
-  return error.code === 'timeout' && error.status === undefined;
+  if (error instanceof BffError) return error.code === 'timeout' && error.status === undefined;
+  return error instanceof Error && FETCH_FAILURE.test(error.message);
 }
 
 /**
