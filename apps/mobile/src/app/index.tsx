@@ -1,13 +1,14 @@
 import type { BotSummary, BotsResponse } from '@hermes-mobile/api';
 import { router, Stack, useFocusEffect, useTheme } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Button, FlatList, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { BotAvatar } from '@/components/BotAvatar';
 import { BotModeDisabled } from '@/components/BotModeDisabled';
 import { BffError, getBotChat, getBotMessages, listBots } from '@/lib/bff';
 import { lastMessagePreview } from '@/lib/bots';
 import { bindCache, readRoster, savedDataHint, writeRoster } from '@/lib/cache';
 import { loadConfig, pairedUrl } from '@/lib/config';
+import { localNetworkHint } from '@/lib/localNetwork';
 
 const NO_BOT_CHAT = 'No Bot Chat yet';
 
@@ -41,6 +42,8 @@ export default function HomeScreen() {
   const [error, setError] = useState<string | null>(null);
   /** Why the saved roster is on screen after a failed refresh ("Offline", or the BFF's error). */
   const [savedHint, setSavedHint] = useState<string | null>(null);
+  /** Why Android may be blocking the BFF (Nearby devices on Android 17), shown under the error. */
+  const [networkHint, setNetworkHint] = useState<string | null>(null);
   // Each refresh bumps this; previews from an older refresh are dropped when they land.
   const generation = useRef(0);
 
@@ -69,6 +72,7 @@ export default function HomeScreen() {
       setRosterOwner(url);
       setFromCache(false);
       setError(null);
+      setNetworkHint(null);
       // Previews fill in after the roster renders; one failing Bot never blanks the list.
       next.bots
         .filter((b) => b.reachable)
@@ -81,6 +85,7 @@ export default function HomeScreen() {
       if (current === generation.current) {
         setError((e as Error).message);
         setSavedHint(savedDataHint(e, 'data'));
+        setNetworkHint(localNetworkHint(url, e));
       }
     } finally {
       // Only the latest refresh owns the spinner.
@@ -101,7 +106,16 @@ export default function HomeScreen() {
   );
 
   const header = (
-    <Stack.Screen options={{ headerLeft: () => <Button title="Pair" onPress={() => router.push('/pair')} /> }} />
+    <Stack.Screen
+      options={{
+        headerLeft: () => (
+          // The native header puts the title right after headerLeft: keep a gap.
+          <View testID="pair-action" style={styles.headerAction}>
+            <Button title="Pair" onPress={() => router.push('/pair')} />
+          </View>
+        ),
+      }}
+    />
   );
 
   if (roster && !roster.botModeEnabled) {
@@ -155,11 +169,19 @@ export default function HomeScreen() {
         refreshing={loading}
         onRefresh={refresh}
         ListHeaderComponent={
-          fromCache && (loading || error) ? (
-            <Text style={[styles.hint, { color: colors.text }]}>{error ? savedHint : 'Updating…'}</Text>
-          ) : error ? (
-            <Text style={[styles.error, { color: colors.notification }]}>{error}</Text>
-          ) : undefined
+          <>
+            {fromCache && (loading || error) ? (
+              <Text style={[styles.hint, { color: colors.text }]}>{error ? savedHint : 'Updating…'}</Text>
+            ) : error ? (
+              <Text style={[styles.error, { color: colors.notification }]}>{error}</Text>
+            ) : null}
+            {error && networkHint ? (
+              <View style={styles.networkHint}>
+                <Text style={{ color: colors.text }}>{networkHint}</Text>
+                <Button title="Open settings" onPress={() => Linking.openSettings()} />
+              </View>
+            ) : null}
+          </>
         }
         ListEmptyComponent={
           roster && !error ? (
@@ -173,6 +195,7 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
+  headerAction: { marginEnd: 16 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -187,5 +210,6 @@ const styles = StyleSheet.create({
   preview: { fontSize: 14, opacity: 0.6 },
   empty: { textAlign: 'center', marginTop: 48, opacity: 0.6, paddingHorizontal: 24 },
   error: { padding: 16 },
+  networkHint: { paddingHorizontal: 16, paddingBottom: 12, gap: 8 },
   hint: { paddingHorizontal: 16, paddingVertical: 6, fontSize: 12, opacity: 0.6, textAlign: 'center' },
 });

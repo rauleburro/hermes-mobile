@@ -1,6 +1,6 @@
 import type { RunEvent, SessionMessage } from '@hermes-mobile/api';
-import { act, render, screen, userEvent, waitFor } from '@testing-library/react-native';
-import { Alert } from 'react-native';
+import { act, fireEvent, render, screen, userEvent, waitFor } from '@testing-library/react-native';
+import { Alert, DeviceEventEmitter, Platform, StyleSheet } from 'react-native';
 import BotChatScreen from '@mobile/app/bot/[botId]';
 import {
   BffError,
@@ -12,16 +12,23 @@ import {
   stopBotRun,
 } from '@mobile/lib/bff';
 import { buildChatItems } from '@mobile/lib/chatItems';
+import { placeholderColor } from '@mobile/lib/theme';
 import { TURN_POLL_MAX_INTERVAL_MS, TURN_POLL_MAX_MS, TURN_POLL_MS } from '@mobile/lib/useTurnPolling';
 
+let mockTheme = {
+  dark: false,
+  colors: { text: 'black', border: 'gray', notification: 'red', card: 'white', primary: 'blue', background: 'white' },
+};
 jest.mock('expo-router', () => ({
   // Render the header's Stop button so tests can press it.
   Stack: { Screen: ({ options }: { options?: { headerRight?: () => unknown } }) => options?.headerRight?.() ?? null },
   useLocalSearchParams: () => ({ botId: 'default', name: 'Hermes' }),
-  useTheme: () => ({ colors: { text: 'black', border: 'gray', notification: 'red', card: 'white', primary: 'blue' } }),
+  useTheme: () => mockTheme,
   // Always focused here; focus and blur handling is covered by the useTurnPolling tests.
   useFocusEffect: (effect: () => void | (() => void)) => jest.requireActual<typeof import('react')>('react').useEffect(effect, [effect]),
 }));
+// The native header's height, which the composer must clear when the keyboard opens.
+jest.mock('expo-router/react-navigation', () => ({ useHeaderHeight: () => 120 }));
 // Each send gets a new id (client-msg-1, -2, …); a resend reuses its message's id.
 let mockUuid = 0;
 jest.mock('expo-crypto', () => ({ randomUUID: () => `client-msg-${++mockUuid}` }));
@@ -718,5 +725,38 @@ describe('BotChatScreen tool cards', () => {
       expect(screen.getByText('Working… 1s')).toBeOnTheScreen();
       expect(buildChatItems).toHaveBeenCalledTimes(before);
     });
+  });
+});
+
+describe('BotChatScreen composer', () => {
+  it.each([false, true])('themes the placeholder color (dark: %s)', async (dark) => {
+    mockTheme = { ...mockTheme, dark };
+    await render(<BotChatScreen />);
+
+    expect(await screen.findByPlaceholderText('Message Hermes')).toHaveProp('placeholderTextColor', placeholderColor({ dark }));
+  });
+
+  it.each([
+    ['ios', 'keyboardWillShow'],
+    ['android', 'keyboardDidShow'],
+  ] as const)('lifts the composer above the keyboard on %s, counting the header above the screen', async (os, showEvent) => {
+    jest.replaceProperty(Platform, 'OS', os);
+    await render(<BotChatScreen />);
+    await screen.findByPlaceholderText('Message Hermes');
+    const chat = screen.getByTestId('bot-chat');
+    // The screen sits under a 120 pt header and runs 700 pt down to the bottom of an 820 pt display.
+    await fireEvent(chat, 'layout', { persist: () => {}, nativeEvent: { layout: { x: 0, y: 0, width: 400, height: 700 } } });
+
+    // The keyboard's top edge at y=520 on the display hides the screen's bottom 300 pt.
+    await act(async () => {
+      DeviceEventEmitter.emit(showEvent, {
+        duration: 0,
+        easing: 'keyboard',
+        endCoordinates: { screenX: 0, screenY: 520, width: 400, height: 300 },
+      });
+    });
+
+    // Android draws edge to edge, so the window no longer resizes for the keyboard: both platforms pad.
+    await waitFor(() => expect(StyleSheet.flatten(screen.getByTestId('bot-chat').props.style).paddingBottom).toBe(300));
   });
 });

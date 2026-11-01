@@ -1,8 +1,10 @@
 import { act, render, screen, userEvent, waitFor } from '@testing-library/react-native';
+import { Linking } from 'react-native';
 import { router } from 'expo-router';
 import PairScreen from '@mobile/app/pair';
 import { checkHealth } from '@mobile/lib/bff';
 import { loadConfig, saveConfig } from '@mobile/lib/config';
+import { ensureLocalNetworkAccess, LOCAL_NETWORK_HINT, localNetworkHint } from '@mobile/lib/localNetwork';
 
 // The screen only needs a theme, the route params (the pairing link's query) and router.replace.
 const mockParams = jest.fn((): Record<string, string | string[]> => ({}));
@@ -14,16 +16,26 @@ jest.mock('expo-router', () => ({
 // Network and secure storage are the screen's only side effects.
 jest.mock('@mobile/lib/bff', () => ({ checkHealth: jest.fn() }));
 jest.mock('@mobile/lib/config', () => ({ loadConfig: jest.fn().mockResolvedValue(null), saveConfig: jest.fn() }));
+// Android 17's Nearby devices permission (covered by the localNetwork tests): only its answers matter here.
+jest.mock('@mobile/lib/localNetwork', () => ({
+  ...jest.requireActual('@mobile/lib/localNetwork'),
+  ensureLocalNetworkAccess: jest.fn(),
+  localNetworkHint: jest.fn(),
+}));
 
 beforeEach(() => {
   jest.clearAllMocks();
   mockParams.mockReturnValue({});
   mockedLoadConfig.mockResolvedValue(null);
+  mockedEnsureAccess.mockResolvedValue('not-needed');
+  mockedHint.mockReturnValue(null);
 });
 
 const mockedCheckHealth = jest.mocked(checkHealth);
 const mockedSaveConfig = jest.mocked(saveConfig);
 const mockedLoadConfig = jest.mocked(loadConfig);
+const mockedEnsureAccess = jest.mocked(ensureLocalNetworkAccess);
+const mockedHint = jest.mocked(localNetworkHint);
 
 const urlField = () => screen.getByPlaceholderText('http://192.168.1.10:8787');
 const tokenField = () => screen.getByPlaceholderText('from `pnpm pair`');
@@ -266,3 +278,76 @@ describe('PairScreen never sends the stored token to another BFF', () => {
   });
 });
 
+describe('PairScreen on the local network (Android 17 Nearby devices)', () => {
+  it('asks for Nearby devices before contacting a local BFF', async () => {
+    mockedCheckHealth.mockResolvedValue({ ok: true, hermes: true });
+    await render(<PairScreen />);
+
+    const user = await fillForm('http://192.168.1.10:8787/', 'secret');
+    await user.press(screen.getByRole('button', { name: 'Pair' }));
+
+    expect(mockedEnsureAccess).toHaveBeenCalledWith('http://192.168.1.10:8787');
+    expect(mockedEnsureAccess.mock.invocationCallOrder[0]).toBeLessThan(mockedCheckHealth.mock.invocationCallOrder[0]);
+    expect(mockedSaveConfig).toHaveBeenCalled();
+  });
+
+  it('explains a denied Nearby devices right away, and still tries the BFF', async () => {
+    mockedEnsureAccess.mockResolvedValue('denied');
+    let answer: (h: { ok: boolean; hermes: boolean }) => void = () => {};
+    mockedCheckHealth.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    await render(<PairScreen />);
+
+    const user = await fillForm('http://192.168.1.10:8787', 'secret');
+    await user.press(screen.getByRole('button', { name: 'Pair' }));
+
+    // Shown while the request may hang, not only after it gives up.
+    expect(await screen.findByText(LOCAL_NETWORK_HINT)).toBeOnTheScreen();
+    expect(mockedCheckHealth).toHaveBeenCalled();
+
+    await act(async () => answer({ ok: true, hermes: true }));
+    expect(mockedSaveConfig).toHaveBeenCalled();
+    expect(router.replace).toHaveBeenCalledWith('/');
+  });
+
+  it('names Nearby devices when Pair fails with a network error to a local address, and opens the settings', async () => {
+    const error = new TypeError('Network request failed');
+    mockedCheckHealth.mockRejectedValue(error);
+    mockedHint.mockReturnValue(LOCAL_NETWORK_HINT);
+    const openSettings = jest.spyOn(Linking, 'openSettings').mockResolvedValue(undefined);
+    await render(<PairScreen />);
+
+    const user = await fillForm('http://hermes-bff.local:9', 'secret');
+    await user.press(screen.getByRole('button', { name: 'Pair' }));
+
+    expect(await screen.findByText('Could not reach the BFF: Network request failed')).toBeOnTheScreen();
+    expect(screen.getByText(LOCAL_NETWORK_HINT)).toBeOnTheScreen();
+    expect(mockedHint).toHaveBeenCalledWith('http://hermes-bff.local:9', error);
+
+    await user.press(screen.getByRole('button', { name: 'Open settings' }));
+    expect(openSettings).toHaveBeenCalled();
+  });
+
+  it('still pairs when asking for the permission itself fails', async () => {
+    mockedEnsureAccess.mockRejectedValue(new Error('PermissionsAndroid is not installed correctly.'));
+    mockedCheckHealth.mockResolvedValue({ ok: true, hermes: true });
+    await render(<PairScreen />);
+
+    const user = await fillForm('http://192.168.1.10:8787', 'secret');
+    await user.press(screen.getByRole('button', { name: 'Pair' }));
+
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/'));
+    expect(mockedSaveConfig).toHaveBeenCalled();
+  });
+
+  it('shows no hint or settings button when the failure is not about the local network', async () => {
+    mockedCheckHealth.mockRejectedValue(new Error('GET /health failed (500)'));
+    await render(<PairScreen />);
+
+    const user = await fillForm('http://192.168.1.10:8787', 'secret');
+    await user.press(screen.getByRole('button', { name: 'Pair' }));
+
+    expect(await screen.findByText('Could not reach the BFF: GET /health failed (500)')).toBeOnTheScreen();
+    expect(screen.queryByText(LOCAL_NETWORK_HINT)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open settings' })).toBeNull();
+  });
+});

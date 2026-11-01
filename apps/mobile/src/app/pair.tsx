@@ -1,8 +1,9 @@
 import { router, useLocalSearchParams, useTheme } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Button, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Button, Linking, StyleSheet, Text, TextInput, View } from 'react-native';
 import { checkHealth } from '@/lib/bff';
 import { type BffConfig, loadConfig, saveConfig } from '@/lib/config';
+import { ensureLocalNetworkAccess, LOCAL_NETWORK_HINT, localNetworkHint } from '@/lib/localNetwork';
 import { normalizeBffUrl, parsePairParams } from '@/lib/pairing';
 
 // Reached manually or via hermesmobile://pair?url=…&token=… (the QR printed by `pnpm pair`).
@@ -21,6 +22,8 @@ export default function PairScreen() {
   const [tokenFromStore, setTokenFromStore] = useState(false);
   const [stored, setStored] = useState<BffConfig | null>(null);
   const [status, setStatus] = useState<string | null>(link.error ?? null);
+  /** Why Android may be blocking the BFF (Nearby devices on Android 17), with a way to fix it. */
+  const [networkHint, setNetworkHint] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   // A link opened while this screen is already showing only changes the params: refill the form.
@@ -63,8 +66,9 @@ export default function PairScreen() {
   async function pair() {
     setBusy(true);
     setStatus(null);
+    setNetworkHint(null);
+    const normalized = normalizeBffUrl(url);
     try {
-      const normalized = normalizeBffUrl(url);
       if (!normalized) {
         setStatus('Enter the BFF URL as http://host:port or https://host.');
         return;
@@ -74,12 +78,17 @@ export default function PairScreen() {
         return;
       }
       const config = { url: normalized, token: token.trim() };
+      // Without Nearby devices a local request hangs for minutes: say why now, and still try
+      // (a build that doesn't declare the permission is "denied" yet keeps local access).
+      const access = await ensureLocalNetworkAccess(normalized).catch(() => 'unknown');
+      if (access === 'denied') setNetworkHint(LOCAL_NETWORK_HINT);
       const health = await checkHealth(config);
       await saveConfig(config);
       if (!health.hermes) setStatus('Paired, but the BFF cannot reach Hermes yet.');
       router.replace('/');
     } catch (error) {
       setStatus(`Could not reach the BFF: ${(error as Error).message}`);
+      setNetworkHint(normalized ? localNetworkHint(normalized, error) : null);
     } finally {
       setBusy(false);
     }
@@ -95,6 +104,12 @@ export default function PairScreen() {
       {replacing && <Text style={{ color: colors.text }}>Pairing replaces the current BFF ({stored?.url}).</Text>}
       {busy ? <ActivityIndicator /> : <Button title="Pair" onPress={pair} disabled={!url || !token} />}
       {status && <Text style={{ color: colors.notification }}>{status}</Text>}
+      {networkHint && (
+        <>
+          <Text style={{ color: colors.text }}>{networkHint}</Text>
+          <Button title="Open settings" onPress={() => Linking.openSettings()} />
+        </>
+      )}
     </View>
   );
 }
