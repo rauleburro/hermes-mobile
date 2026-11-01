@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { git } from "../../../scripts/git.mjs";
-import { hookInstallPlan } from "../../../scripts/prepare.mjs";
+import { hookInstallPlan, installHooks } from "../../../scripts/prepare.mjs";
 
 const SCRIPT = resolve(import.meta.dirname, "../../../scripts/prepare.mjs");
 
@@ -63,5 +63,39 @@ describe("hookInstallPlan", () => {
     const res = spawnSync("node", [SCRIPT], { cwd: plain, env: cleanEnv(), encoding: "utf8" });
     expect(res.status).toBe(0);
     expect(res.stdout).toMatch(/skip/i);
+  });
+});
+
+describe("installHooks", () => {
+  const capture = () => {
+    const lines: string[] = [];
+    return { lines, warn: (line: string) => lines.push(line) };
+  };
+
+  it("returns 0 silently when lefthook install succeeds", () => {
+    const { lines, warn } = capture();
+    const calls: [string, string[]][] = [];
+    const spawn = (cmd: string, args: string[]) => {
+      calls.push([cmd, args]);
+      return { status: 0 };
+    };
+    expect(installHooks({ spawn, warn })).toBe(0);
+    expect(calls).toEqual([["lefthook", ["install"]]]);
+    expect(lines).toEqual([]);
+  });
+
+  it("warns with manual guidance and returns 0 when lefthook install exits non-zero", () => {
+    const { lines, warn } = capture();
+    expect(installHooks({ spawn: () => ({ status: 1 }), warn })).toBe(0);
+    const text = lines.join("\n");
+    expect(text).toContain("npx lefthook install");
+    expect(text).toContain("core.hooksPath");
+  });
+
+  it("warns and returns 0 when lefthook cannot be started (not installed)", () => {
+    const { lines, warn } = capture();
+    const error = Object.assign(new Error("spawn lefthook ENOENT"), { code: "ENOENT" });
+    expect(installHooks({ spawn: () => ({ status: null, error }), warn })).toBe(0);
+    expect(lines.join("\n")).toContain("npx lefthook install");
   });
 });
