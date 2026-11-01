@@ -20,4 +20,38 @@ describe('MessageBubble', () => {
     expect(screen.getByLabelText('You: hi')).toHaveProp('accessible', true);
     expect(screen.queryByLabelText('Bot: hi')).toBeNull();
   });
+
+  it('renders a final assistant reply as Markdown', async () => {
+    await render(<MessageBubble role="assistant" text="Sure, **bold** reply" />);
+
+    expect(screen.getByText('bold')).toBeOnTheScreen();
+    expect(screen.queryByText(/\*\*bold\*\*/)).toBeNull();
+  });
+
+  it('shows what the user sent literally, without interpreting Markdown', async () => {
+    await render(<MessageBubble role="user" text="Please use **stars** and `ticks`" />);
+
+    expect(screen.getByText('Please use **stars** and `ticks`')).toBeOnTheScreen();
+  });
+
+  it('keeps a reply that is still streaming as plain text', async () => {
+    await render(<MessageBubble role="assistant" text="Partial **bold**" streaming />);
+
+    expect(screen.getByText('Partial **bold**')).toBeOnTheScreen();
+  });
+
+  it('lets a screen reader reach each link: a bubble with links is not one grouped element', async () => {
+    await render(<MessageBubble role="assistant" text="See [the docs](https://example.com/docs) and [faq](https://example.com/faq)." />);
+
+    expect(screen.getByRole('link', { name: 'the docs' })).toBeOnTheScreen();
+    expect(screen.getByRole('link', { name: 'faq' })).toBeOnTheScreen();
+    expect(screen.queryByLabelText(/^Bot: /)).toBeNull();
+  });
+
+  it('stays one grouped element when its only link is not openable (shown as plain text)', async () => {
+    await render(<MessageBubble role="assistant" text="[x](javascript:alert(1))" />);
+
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(screen.getByLabelText('Bot: [x](javascript:alert(1))')).toHaveProp('accessible', true);
+  });
 });

@@ -66,6 +66,30 @@ describe('BotChatScreen', () => {
     expect(getBotMessages).toHaveBeenCalledWith('default', 'chat-default');
   });
 
+  it('renders assistant replies as Markdown and keeps user lines literal', async () => {
+    jest.mocked(getBotMessages).mockResolvedValue([
+      { id: 1, role: 'user', content: 'Please use **stars**' },
+      { id: 2, role: 'assistant', content: 'Sure, **bold** reply' },
+    ]);
+    await render(<BotChatScreen />);
+
+    expect(await screen.findByText('Please use **stars**')).toBeOnTheScreen();
+    expect(screen.getByText('bold')).toBeOnTheScreen();
+    expect(screen.queryByText(/\*\*bold\*\*/)).toBeNull();
+  });
+
+  it('renders the final reply from run.completed as Markdown', async () => {
+    const finish = controllableRun();
+    await render(<BotChatScreen />);
+    await send('[e2e] ping');
+    await screen.findByText(/Working…/);
+
+    finish({ event: 'run.completed', run_id: 'run-1', timestamp: 1, output: '## Done\n\n**E2E-OK**' });
+
+    expect(await screen.findByRole('header', { name: 'Done' })).toBeOnTheScreen();
+    expect(screen.queryByText(/\*\*E2E-OK\*\*/)).toBeNull();
+  });
+
   it('explains a missing Bot Chat and offers no composer', async () => {
     jest.mocked(getBotChat).mockRejectedValue(new BffError('409', 409, 'bot_chat_missing'));
     await render(<BotChatScreen />);

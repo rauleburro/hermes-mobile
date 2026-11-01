@@ -58,6 +58,25 @@ function parse(text: string): Token[] | null {
   }
 }
 
+/**
+ * Whether `text` renders at least one link that can be opened (http/https/mailto).
+ * Containers use it to avoid grouping a reply into one accessibility element, which
+ * would hide its links from screen readers.
+ */
+export function hasOpenableLinks(text: string): boolean {
+  const tokens = parse(text);
+  return tokens ? tokens.some(containsOpenableLink) : false;
+}
+
+function containsOpenableLink(token: Token): boolean {
+  if (token.type === 'link' && OPENABLE.test((token as Tokens.Link).href)) return true;
+  const children: Token[] = [
+    ...(('tokens' in token && Array.isArray(token.tokens) ? token.tokens : []) as Token[]),
+    ...(token.type === 'list' ? (token as Tokens.List).items : []),
+  ];
+  return children.some(containsOpenableLink);
+}
+
 export function Markdown({ children }: { children: string }) {
   const { colors } = useTheme();
   const tokens = useMemo(() => parse(children), [children]);

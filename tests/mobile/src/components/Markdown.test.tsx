@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from '@testing-library/react-native';
 import { Linking, Platform, StyleSheet } from 'react-native';
-import { Markdown } from '@mobile/components/Markdown';
+import { hasOpenableLinks, Markdown } from '@mobile/components/Markdown';
 
 // The component reads its colors from the navigation theme. Each test can switch it.
 const LIGHT = { dark: false, colors: { text: 'rgb(28, 28, 30)', border: 'rgb(216, 216, 216)', primary: 'rgb(0, 122, 255)' } };
@@ -231,5 +231,23 @@ describe('Markdown', () => {
     expect(styleOf(screen.getByText(/plain text/)).color).toBe(DARK.colors.text);
     expect(styleOf(screen.getByText('block')).color).toBe(DARK.colors.text);
     expect(styleOf(screen.getByTestId('markdown-code-block')).backgroundColor).toBe(DARK.colors.border);
+  });
+});
+
+describe('hasOpenableLinks', () => {
+  it('finds http(s) and mailto links, also nested in lists and quotes', () => {
+    expect(hasOpenableLinks('See [docs](https://example.com)')).toBe(true);
+    expect(hasOpenableLinks('- item\n  - [mail](mailto:a@example.com)')).toBe(true);
+    expect(hasOpenableLinks('> quoted [link](http://example.com)')).toBe(true);
+  });
+
+  it('ignores links that are shown as plain text', () => {
+    expect(hasOpenableLinks('plain **text**')).toBe(false);
+    expect(hasOpenableLinks('[x](javascript:alert(1))')).toBe(false);
+    expect(hasOpenableLinks('`[code](https://example.com)`')).toBe(false);
+  });
+
+  it('is false for text that is too large to parse (it renders as plain text)', () => {
+    expect(hasOpenableLinks(`[a](https://example.com) ${'word '.repeat(7000)}`)).toBe(false);
   });
 });
