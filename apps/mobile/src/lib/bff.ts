@@ -6,10 +6,11 @@ import type {
   BotsResponse,
   HealthResponse,
   RunEvent,
+  RunStatus,
   SendMessageResponse,
   SessionMessage,
 } from '@hermes-mobile/api';
-import { TERMINAL_EVENTS } from '@hermes-mobile/api';
+import { TERMINAL_EVENTS, isTerminalStatus } from '@hermes-mobile/api';
 import { fetch as streamingFetch } from 'expo/fetch';
 import { loadConfig, type BffConfig } from './config';
 import { createSseParser } from './sse';
@@ -208,6 +209,23 @@ function watchConnection(outer: AbortSignal, ms: number) {
   };
 }
 
+/** Reconnect delay after the n-th failure or clean close in a row: 2 s, 4 s, 8 s, then 10 s. */
+const reconnectDelay = (n: number) => Math.min(1000 * 2 ** n, 10_000);
+
+/** Resolves after `ms`, or at once when `signal` aborts. */
+function pause(ms: number, signal: AbortSignal) {
+  return new Promise<void>((resolve) => {
+    if (signal.aborted) return resolve();
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener('abort', done);
+  });
+}
+
 /**
  * Follows a Bot run's events until a terminal event, reconnecting with Last-Event-ID when the
  * connection drops or goes silent for {@link SSE_IDLE_TIMEOUT_MS}. Resolves when the run ends or
@@ -223,6 +241,9 @@ export async function followBotRun(
   let lastSeq: string | undefined;
   let done = false;
   let failures = 0;
+  // Streams in a row that closed cleanly on a live run (Hermes does so with the run still `queued`
+  // when it hands admission to the next gateway owner). Never gives up, only slows down.
+  let cleanCloses = 0;
 
   while (!done && !signal.aborted) {
     try {
@@ -238,6 +259,7 @@ export async function followBotRun(
         failures = 0;
         const decoder = new TextDecoder();
         const parse = createSseParser((frame) => {
+          cleanCloses = 0;
           if (frame.id) lastSeq = frame.id;
           const event = JSON.parse(frame.data) as RunEvent;
           onEvent(event);
@@ -255,10 +277,14 @@ export async function followBotRun(
       }
       if (!done) {
         // Stream closed without a terminal event: the run may already be over (buffer expired).
-        const run = await request<{ status: string; output?: string }>(botRun(botId, runId), { signal });
-        if (['completed', 'failed', 'cancelled', 'interrupted'].includes(run.status)) {
+        // `unknown` is not terminal: keep reconnecting.
+        const run = await request<{ status: RunStatus; output?: string }>(botRun(botId, runId), { signal });
+        if (isTerminalStatus(run.status)) {
           onEvent({ event: `run.${run.status}`, run_id: runId, timestamp: Date.now() / 1000, output: run.output } as RunEvent);
           done = true;
+        } else {
+          cleanCloses++;
+          await pause(reconnectDelay(cleanCloses), signal);
         }
       }
     } catch (error) {
@@ -270,7 +296,7 @@ export async function followBotRun(
       // (useTurnPolling) ends the turn: reopening with Last-Event-ID is cheap.
       failures++;
       if (failures > 5) throw error;
-      await new Promise((r) => setTimeout(r, Math.min(1000 * 2 ** failures, 10_000)));
+      await new Promise((r) => setTimeout(r, reconnectDelay(failures)));
     }
   }
 }

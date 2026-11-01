@@ -289,6 +289,7 @@ describe('Bot Chat turns', () => {
   });
 
   it('reconnects with Last-Event-ID when the stream closes before the run ends', async () => {
+    jest.useFakeTimers();
     jest
       .mocked(streamingFetch)
       .mockResolvedValueOnce(sseResponse('id: 1\ndata: {"event":"run.started","run_id":"run-1","timestamp":1}\n\n') as never)
@@ -296,7 +297,10 @@ describe('Bot Chat turns', () => {
     respond(200, { run_id: 'run-1', status: 'running' });
     const events: RunEvent[] = [];
 
-    await followBotRun('default', 'run-1', (e) => events.push(e), new AbortController().signal);
+    const done = followBotRun('default', 'run-1', (e) => events.push(e), new AbortController().signal);
+    await jest.advanceTimersByTimeAsync(2_000);
+    await done;
+    jest.useRealTimers();
 
     expect(fetchMock.mock.calls[0][0]).toBe('http://bff.local:8787/bots/default/runs/run-1');
     const second = jest.mocked(streamingFetch).mock.calls[1];
@@ -312,6 +316,110 @@ describe('Bot Chat turns', () => {
     await followBotRun('default', 'run-1', (e) => events.push(e), new AbortController().signal);
 
     expect(events).toEqual([expect.objectContaining({ event: 'run.completed', output: 'done' })]);
+  });
+
+  // Hermes closes a run's stream cleanly with the run still `queued` when it hands admission to
+  // the next gateway owner, and a reconnect replays that close at once: reconnect, but not in a loop.
+  describe('stream closes cleanly while the run is still live', () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    const status = (body: unknown) => ({ ok: true, status: 200, json: async () => body });
+    const completed = 'id: 9\ndata: {"event":"run.completed","run_id":"run-1","timestamp":9}\n\n';
+
+    it('waits 2 s before reconnecting while the run is queued', async () => {
+      jest
+        .mocked(streamingFetch)
+        .mockResolvedValueOnce(sseResponse() as never)
+        .mockResolvedValueOnce(sseResponse(completed) as never);
+      fetchMock.mockResolvedValueOnce(status({ run_id: 'run-1', status: 'queued' }));
+      const events: RunEvent[] = [];
+
+      const done = followBotRun('default', 'run-1', (e) => events.push(e), new AbortController().signal);
+      await jest.advanceTimersByTimeAsync(1_999);
+      expect(streamingFetch).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(1);
+      await done;
+
+      expect(streamingFetch).toHaveBeenCalledTimes(2);
+      expect(events.map((e) => e.event)).toEqual(['run.completed']);
+    });
+
+    it('waits longer after each clean close in a row (2 s, then 4 s)', async () => {
+      jest
+        .mocked(streamingFetch)
+        .mockResolvedValueOnce(sseResponse() as never)
+        .mockResolvedValueOnce(sseResponse() as never)
+        .mockResolvedValueOnce(sseResponse(completed) as never);
+      fetchMock
+        .mockResolvedValueOnce(status({ run_id: 'run-1', status: 'queued' }))
+        .mockResolvedValueOnce(status({ run_id: 'run-1', status: 'queued' }));
+
+      const done = followBotRun('default', 'run-1', () => {}, new AbortController().signal);
+      await jest.advanceTimersByTimeAsync(2_000);
+      expect(streamingFetch).toHaveBeenCalledTimes(2);
+      await jest.advanceTimersByTimeAsync(3_999);
+      expect(streamingFetch).toHaveBeenCalledTimes(2);
+      await jest.advanceTimersByTimeAsync(1);
+      await done;
+
+      expect(streamingFetch).toHaveBeenCalledTimes(3);
+    });
+
+    it('starts the wait over once a stream delivers events', async () => {
+      const queued = 'id: 5\ndata: {"event":"run.queued","run_id":"run-1","timestamp":5}\n\n';
+      jest
+        .mocked(streamingFetch)
+        .mockResolvedValueOnce(sseResponse() as never)
+        .mockResolvedValueOnce(sseResponse(queued) as never)
+        .mockResolvedValueOnce(sseResponse(completed) as never);
+      fetchMock
+        .mockResolvedValueOnce(status({ run_id: 'run-1', status: 'queued' }))
+        .mockResolvedValueOnce(status({ run_id: 'run-1', status: 'queued' }));
+
+      const done = followBotRun('default', 'run-1', () => {}, new AbortController().signal);
+      await jest.advanceTimersByTimeAsync(2_000);
+      expect(streamingFetch).toHaveBeenCalledTimes(2);
+      await jest.advanceTimersByTimeAsync(2_000); // events arrived, so 2 s again rather than 4 s
+      await done;
+
+      expect(streamingFetch).toHaveBeenCalledTimes(3);
+      expect((jest.mocked(streamingFetch).mock.calls[2][1] as RequestInit).headers).toMatchObject({ 'Last-Event-ID': '5' });
+    });
+
+    it('keeps reconnecting while the run status is unknown (not terminal)', async () => {
+      jest
+        .mocked(streamingFetch)
+        .mockResolvedValueOnce(sseResponse() as never)
+        .mockResolvedValueOnce(sseResponse(completed) as never);
+      fetchMock.mockResolvedValueOnce(status({ run_id: 'run-1', status: 'unknown' }));
+      const events: RunEvent[] = [];
+
+      const done = followBotRun('default', 'run-1', (e) => events.push(e), new AbortController().signal);
+      await jest.advanceTimersByTimeAsync(2_000);
+      await done;
+
+      expect(streamingFetch).toHaveBeenCalledTimes(2);
+      expect(events.map((e) => e.event)).toEqual(['run.completed']);
+    });
+
+    it('returns at once when the caller aborts during the wait', async () => {
+      jest.mocked(streamingFetch).mockResolvedValueOnce(sseResponse() as never);
+      fetchMock.mockResolvedValueOnce(status({ run_id: 'run-1', status: 'queued' }));
+      const controller = new AbortController();
+      let settled = false;
+      const done = followBotRun('default', 'run-1', () => {}, controller.signal).finally(() => (settled = true));
+      await jest.advanceTimersByTimeAsync(1);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      controller.abort();
+      await jest.advanceTimersByTimeAsync(1);
+
+      expect(settled).toBe(true);
+      await expect(done).resolves.toBeUndefined();
+      expect(streamingFetch).toHaveBeenCalledTimes(1);
+      expect(jest.getTimerCount()).toBe(0);
+    });
   });
 
   describe('idle timeout', () => {
