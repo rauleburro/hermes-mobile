@@ -8,7 +8,7 @@ import { BffError, getBotChat, getBotMessages, listBots } from '@/lib/bff';
 import { lastMessagePreview } from '@/lib/bots';
 import { bindCache, readRoster, savedDataHint, writeRoster } from '@/lib/cache';
 import { loadConfig, pairedUrl } from '@/lib/config';
-import { localNetworkHint } from '@/lib/localNetwork';
+import { checkedLocalNetworkHint } from '@/lib/localNetwork';
 
 const NO_BOT_CHAT = 'No Bot Chat yet';
 
@@ -85,7 +85,10 @@ export default function HomeScreen() {
       if (current === generation.current) {
         setError((e as Error).message);
         setSavedHint(savedDataHint(e, 'data'));
-        setNetworkHint(localNetworkHint(url, e));
+        // Checks Nearby devices first (no prompt); a refresh started meanwhile owns the hint.
+        checkedLocalNetworkHint(url, e).then((hint) => {
+          if (current === generation.current) setNetworkHint(hint);
+        });
       }
     } finally {
       // Only the latest refresh owns the spinner.
