@@ -33,9 +33,9 @@ Requires Node 24 (`nvm use`), pnpm and a running Hermes Agent with Bot Mode enab
    pnpm bff                                          # http://0.0.0.0:8787
    ```
    Keep the BFF on your LAN or a private network (e.g. Tailscale). Never expose it to the public internet.
-3. **Run the app:** `pnpm mobile`, then open it in Expo Go and enter the URL and token from `pnpm pair`.
-   - The phone must be on the same network as the BFF.
-   - Scanning the QR code with the phone camera only works in a development build, because it uses the `hermesmobile://` scheme.
+3. **Run the app:** build and install the development build once (`cd apps/mobile && npx expo run:android`), then `pnpm mobile` starts Metro for it. Open the pairing link from `pnpm pair` (scan the QR code, or send it with `adb` over USB) and tap **Pair**.
+   - The phone must reach the BFF: over USB with `adb reverse` and `pnpm pair --url http://localhost:8787`, or on the same LAN or Tailscale network.
+   - Step-by-step guide, including troubleshooting: [Run on an Android phone](apps/mobile/README.md#run-on-an-android-phone).
 
 ## Building your own version
 
