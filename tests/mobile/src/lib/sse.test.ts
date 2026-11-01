@@ -42,6 +42,13 @@ describe('createSseParser', () => {
     expect(frames).toEqual([{ id: '2', data: 'x' }]);
   });
 
+  it('handles a CRLF pair split across chunks', () => {
+    const { frames, feed } = collect();
+    feed('data: y\r\n\r');
+    feed('\n');
+    expect(frames).toEqual([{ data: 'y' }]);
+  });
+
   it('ignores comment lines (keepalive) and comment-only frames', () => {
     const { frames, feed } = collect();
     feed(': keepalive\n\n');
