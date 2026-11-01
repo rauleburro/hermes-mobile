@@ -78,6 +78,12 @@ describe('Markdown', () => {
     expect(screen.queryByText(/```/)).toBeNull();
   });
 
+  it('keeps code blocks only as tall as their code (no flex growth inside the bubble)', async () => {
+    await render(<Markdown>{'```\nx\n```'}</Markdown>);
+
+    expect(styleOf(screen.getByTestId('markdown-code-block')).flexGrow).toBe(0);
+  });
+
   it('renders blockquotes in their own container', async () => {
     await render(<Markdown>{'> quoted words'}</Markdown>);
 

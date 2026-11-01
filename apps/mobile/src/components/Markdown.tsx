@@ -165,7 +165,8 @@ const styles = StyleSheet.create({
   del: { textDecorationLine: 'line-through' },
   link: { textDecorationLine: 'underline' },
   code: { fontFamily: MONO, fontSize: 14 },
-  codeBlock: { borderRadius: 8 },
+  // A horizontal ScrollView grows to fill its column parent unless told not to.
+  codeBlock: { borderRadius: 8, flexGrow: 0 },
   codeBlockContent: { padding: 10 },
   list: { gap: 4 },
   listItem: { flexDirection: 'row', gap: 6 },
