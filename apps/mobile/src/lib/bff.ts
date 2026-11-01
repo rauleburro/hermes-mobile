@@ -129,8 +129,53 @@ export async function sendBotMessage(botId: string, clientMessageId: string, tex
 export const stopBotRun = (botId: string, runId: string) => request(botRun(botId, runId, '/stop'), { method: 'POST' });
 
 /**
- * Follows a Bot run's events until a terminal event, reconnecting with Last-Event-ID
- * when the connection drops. Resolves when the run ends or `signal` aborts.
+ * How long a run's event stream may stay silent before it is treated as dead and reopened.
+ * Hermes writes an SSE keepalive comment every 10 s while a run is quiet, and the BFF relays
+ * the bytes unchanged, so three missed keepalives mean a half-open or stalled connection.
+ */
+export const SSE_IDLE_TIMEOUT_MS = 30_000;
+
+/**
+ * Watches one stream connection: aborts it after `ms` with no bytes (including while connecting),
+ * or when `outer` aborts. `guard` races a step of the connection against that, so a fetch or read
+ * that ignores the abort can't hang the caller; each step that settles resets the timer.
+ */
+function watchConnection(outer: AbortSignal, ms: number) {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let fail: (error: Error) => void = () => {};
+  const tripped = new Promise<never>((_, reject) => (fail = reject));
+  tripped.catch(() => {}); // Only observed through guard().
+  const trip = (error: Error) => {
+    clearTimeout(timer);
+    controller.abort();
+    fail(error);
+  };
+  const onAbort = () => trip(new BffError('events aborted'));
+  outer.addEventListener('abort', onAbort);
+  const reset = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => trip(new BffError(`events idle for ${ms / 1000} s`, undefined, 'timeout')), ms);
+  };
+  reset();
+  return {
+    signal: controller.signal,
+    guard: <T>(step: Promise<T>): Promise<T> =>
+      Promise.race([step, tripped]).then((value) => {
+        reset();
+        return value;
+      }),
+    stop: () => {
+      clearTimeout(timer);
+      outer.removeEventListener('abort', onAbort);
+    },
+  };
+}
+
+/**
+ * Follows a Bot run's events until a terminal event, reconnecting with Last-Event-ID when the
+ * connection drops or goes silent for {@link SSE_IDLE_TIMEOUT_MS}. Resolves when the run ends or
+ * `signal` aborts.
  */
 export async function followBotRun(
   botId: string,
@@ -145,24 +190,32 @@ export async function followBotRun(
 
   while (!done && !signal.aborted) {
     try {
-      const res = await streamingFetch(`${url}${botRun(botId, runId, '/events')}`, {
-        headers: { Authorization: `Bearer ${token}`, ...(lastSeq ? { 'Last-Event-ID': lastSeq } : {}) },
-        signal,
-      });
-      if (!res.ok || !res.body) throw new BffError(`events failed (${res.status})`, res.status);
-      failures = 0;
-      const decoder = new TextDecoder();
-      const parse = createSseParser((frame) => {
-        if (frame.id) lastSeq = frame.id;
-        const event = JSON.parse(frame.data) as RunEvent;
-        onEvent(event);
-        if (TERMINAL_EVENTS.has(event.event)) done = true;
-      });
-      const reader = res.body.getReader();
-      while (!done) {
-        const { value, done: streamDone } = await reader.read();
-        if (streamDone) break;
-        parse(decoder.decode(value, { stream: true }));
+      const connection = watchConnection(signal, SSE_IDLE_TIMEOUT_MS);
+      try {
+        const res = await connection.guard(
+          streamingFetch(`${url}${botRun(botId, runId, '/events')}`, {
+            headers: { Authorization: `Bearer ${token}`, ...(lastSeq ? { 'Last-Event-ID': lastSeq } : {}) },
+            signal: connection.signal,
+          }),
+        );
+        if (!res.ok || !res.body) throw new BffError(`events failed (${res.status})`, res.status);
+        failures = 0;
+        const decoder = new TextDecoder();
+        const parse = createSseParser((frame) => {
+          if (frame.id) lastSeq = frame.id;
+          const event = JSON.parse(frame.data) as RunEvent;
+          onEvent(event);
+          if (TERMINAL_EVENTS.has(event.event)) done = true;
+        });
+        const reader = res.body.getReader();
+        while (!done) {
+          // Any bytes count as life, keepalive comments included (they never become frames).
+          const { value, done: streamDone } = await connection.guard(reader.read());
+          if (streamDone) break;
+          parse(decoder.decode(value, { stream: true }));
+        }
+      } finally {
+        connection.stop();
       }
       if (!done) {
         // Stream closed without a terminal event: the run may already be over (buffer expired).
@@ -175,6 +228,7 @@ export async function followBotRun(
     } catch (error) {
       if (signal.aborted) return;
       if (error instanceof BffError && error.status === 404) throw error;
+      // A silent stream counts like a dropped one: after a few in a row the turn is reported lost.
       failures++;
       if (failures > 5) throw error;
       await new Promise((r) => setTimeout(r, Math.min(1000 * 2 ** failures, 10_000)));

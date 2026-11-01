@@ -9,6 +9,7 @@ import {
   getBotMessages,
   listBots,
   REQUEST_TIMEOUT_MS,
+  SSE_IDLE_TIMEOUT_MS,
   sendBotMessage,
   stopBotRun,
 } from '@mobile/lib/bff';
@@ -264,6 +265,111 @@ describe('Bot Chat turns', () => {
     await followBotRun('default', 'run-1', (e) => events.push(e), new AbortController().signal);
 
     expect(events).toEqual([expect.objectContaining({ event: 'run.completed', output: 'done' })]);
+  });
+
+  describe('idle timeout', () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    const completed = 'id: 2\ndata: {"event":"run.completed","run_id":"run-1","timestamp":2,"output":"E2E-OK"}\n\n';
+
+    /** A stream that sends `chunks`, then goes silent without closing (a half-open socket). */
+    function silentAfter(...chunks: string[]) {
+      const encoded = chunks.map((c) => new TextEncoder().encode(c));
+      return {
+        ok: true,
+        status: 200,
+        body: {
+          getReader: () => ({
+            read: () => (encoded.length ? Promise.resolve({ value: encoded.shift(), done: false }) : new Promise(() => {})),
+          }),
+        },
+      };
+    }
+
+    /** A stream that sends one chunk every `everyMs`. */
+    function paced(everyMs: number, ...chunks: string[]) {
+      const encoded = chunks.map((c) => new TextEncoder().encode(c));
+      return {
+        ok: true,
+        status: 200,
+        body: {
+          getReader: () => ({
+            read: () =>
+              new Promise((resolve) =>
+                setTimeout(
+                  () => resolve(encoded.length ? { value: encoded.shift(), done: false } : { value: undefined, done: true }),
+                  everyMs,
+                ),
+              ),
+          }),
+        },
+      };
+    }
+
+    it('reconnects with Last-Event-ID when a stream goes silent past the idle timeout', async () => {
+      jest
+        .mocked(streamingFetch)
+        .mockResolvedValueOnce(silentAfter('id: 1\ndata: {"event":"run.started","run_id":"run-1","timestamp":1}\n\n') as never)
+        .mockResolvedValueOnce(sseResponse(completed) as never);
+      const events: RunEvent[] = [];
+      const done = followBotRun('default', 'run-1', (e) => events.push(e), new AbortController().signal);
+
+      await jest.advanceTimersByTimeAsync(SSE_IDLE_TIMEOUT_MS - 1);
+      expect(streamingFetch).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(1);
+      expect((jest.mocked(streamingFetch).mock.calls[0][1] as RequestInit).signal?.aborted).toBe(true);
+      await jest.advanceTimersByTimeAsync(10_000);
+      await done;
+
+      expect(streamingFetch).toHaveBeenCalledTimes(2);
+      expect((jest.mocked(streamingFetch).mock.calls[1][1] as RequestInit).headers).toMatchObject({ 'Last-Event-ID': '1' });
+      expect(events.map((e) => e.event)).toEqual(['run.started', 'run.completed']);
+    });
+
+    it('also gives up on a connection that never answers (e.g. a stopped BFF)', async () => {
+      jest
+        .mocked(streamingFetch)
+        .mockReturnValueOnce(new Promise(() => {}) as never)
+        .mockResolvedValueOnce(sseResponse(completed) as never);
+      const events: RunEvent[] = [];
+      const done = followBotRun('default', 'run-1', (e) => events.push(e), new AbortController().signal);
+
+      await jest.advanceTimersByTimeAsync(SSE_IDLE_TIMEOUT_MS + 10_000);
+      await done;
+
+      expect(streamingFetch).toHaveBeenCalledTimes(2);
+      expect(events.map((e) => e.event)).toEqual(['run.completed']);
+    });
+
+    it("keeps a quiet stream that sends keepalives: any bytes reset the timer", async () => {
+      // Hermes writes `: keepalive` every 10 s while a run is quiet (Bot Chat runs only stream their end).
+      const keepalives = Array.from({ length: 12 }, () => ': keepalive\n\n');
+      jest.mocked(streamingFetch).mockResolvedValueOnce(paced(10_000, ...keepalives, completed) as never);
+      const events: RunEvent[] = [];
+      const done = followBotRun('default', 'run-1', (e) => events.push(e), new AbortController().signal);
+
+      expect(SSE_IDLE_TIMEOUT_MS).toBeGreaterThan(10_000);
+      await jest.advanceTimersByTimeAsync(13 * 10_000);
+      await done;
+
+      expect(streamingFetch).toHaveBeenCalledTimes(1);
+      expect(events.map((e) => e.event)).toEqual(['run.completed']);
+      expect(jest.getTimerCount()).toBe(0);
+    });
+
+    it('still returns at once when the caller aborts', async () => {
+      jest.mocked(streamingFetch).mockResolvedValueOnce(silentAfter() as never);
+      const controller = new AbortController();
+      const done = followBotRun('default', 'run-1', () => {}, controller.signal);
+      await jest.advanceTimersByTimeAsync(1);
+
+      controller.abort();
+      await jest.advanceTimersByTimeAsync(SSE_IDLE_TIMEOUT_MS);
+
+      await expect(done).resolves.toBeUndefined();
+      expect(streamingFetch).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
