@@ -144,18 +144,33 @@ importers:
 
   tests/mobile:
     devDependencies:
+      '@hermes-mobile/api':
+        specifier: workspace:*
+        version: link:../../packages/api
+      '@hermes-mobile/mobile':
+        specifier: workspace:*
+        version: link:../../apps/mobile
       '@testing-library/react-native':
         specifier: ^14.1.0
         version: 14.1.0(jest@30.5.2(@types/node@26.6.6))(react-native@0.88.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7))(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)(test-renderer@1.3.1(@types/react@19.3.0)(react@19.3.0))
       '@types/jest':
         specifier: ^30.0.0
         version: 30.0.0
+      expo:
+        specifier: ~58.0.21
+        version: 58.0.21(@babel/core@7.29.7)(@expo/dom-webview@58.0.2)(@expo/metro-runtime@58.0.15)(expo-router@58.0.28)(react-dom@19.3.0(react@19.3.0))(react-native-web@0.21.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-native-worklets@0.13.0(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7))(react-native@0.88.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7))(@types/react@19.3.0)(react@19.3.0))(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7))(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)(typescript@6.0.3)
+      expo-router:
+        specifier: ~58.0.28
+        version: 58.0.28(9d05d598c86008521f7ca2c9ba2bea39)
       jest:
         specifier: ^30.5.2
         version: 30.5.2(@types/node@26.6.6)
       jest-expo:
         specifier: ~58.0.13
         version: 58.0.13(@babel/core@7.29.7)(@react-native/jest-preset@0.88.1(@babel/core@7.29.7)(react@19.3.0))(@types/react@19.3.0)(expo@58.0.21)(jest@30.5.2(@types/node@26.6.6))(react-native@0.88.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7))(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)
+      react:
+        specifier: 19.3.0
+        version: 19.3.0
       test-renderer:
         specifier: ^1.3.1
         version: 1.3.1(@types/react@19.3.0)(react@19.3.0)
