@@ -100,6 +100,7 @@ Tests live under `tests/<area>`, not next to the code they test:
 
 - `tests/mobile` (`@hermes-mobile/mobile-tests`): the app's tests, with [jest-expo](https://docs.expo.dev/develop/unit-testing/) and React Native Testing Library. They import app code through the `@mobile/*` alias, which maps to `apps/mobile/src/*` (for example `import { createSseParser } from '@mobile/lib/sse'`). Component tests mock `expo-router`, `@mobile/lib/bff` and `@mobile/lib/config` as needed; see `tests/mobile/src/app/pair.test.tsx` for a screen test.
 - `services/bff/test`: the BFF's tests, with vitest.
+- `tests/api` (`@hermes-mobile/api-tests`): contract tests for `packages/api`, with vitest. Type-level checks (`expectTypeOf`, `@ts-expect-error`) are enforced by `pnpm typecheck`.
 
 Why mobile tests are not inside `apps/mobile`: expo-router turns every file under `apps/mobile/src/app` into a route, so a test file there would ship as a screen. A separate package avoids that and keeps the app free of test tooling.
 

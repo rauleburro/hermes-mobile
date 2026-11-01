@@ -367,6 +367,39 @@ describe('per-Bot run routes', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  const approve = (app: ReturnType<typeof setup>['app'], body: string) =>
+    app.request('/bots/default/runs/run_1/approval', {
+      method: 'POST',
+      headers: { ...auth, 'Content-Type': 'application/json' },
+      body,
+    });
+
+  it('POST /bots/:bot/runs/:id/approval forwards generation 0 (a valid first generation)', async () => {
+    const { app, fetchMock } = setup(() => Response.json({ run_id: 'run_1', status: 'resolved', prompt_id: 'p1' }));
+    const res = await approve(app, JSON.stringify({ choice: 'deny', request_id: 'p1', execution_generation: 0 }));
+    expect(res.status).toBe(200);
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      choice: 'deny',
+      request_id: 'p1',
+      execution_generation: 0,
+    });
+  });
+
+  it('POST /bots/:bot/runs/:id/approval answers 400 for a body that is not JSON, without calling Hermes', async () => {
+    const { app, fetchMock } = setup(() => Response.json({}));
+    const res = await approve(app, 'not json');
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("POST /bots/:bot/runs/:id/approval relays Hermes' error status and body unchanged", async () => {
+    const hermesError = { error: { message: 'stale', type: 'invalid_request_error', code: 'stale_generation' } };
+    const { app } = setup(() => Response.json(hermesError, { status: 409 }));
+    const res = await approve(app, JSON.stringify({ choice: 'once', request_id: 'p1', execution_generation: 1 }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual(hermesError);
+  });
+
   it('POST /bots/:bot/runs/:id/stop stops the run on that Bot', async () => {
     const { app, fetchMock } = setup(() => Response.json({ run_id: 'run_1', status: 'stopping' }), keys);
     const res = await app.request('/bots/researcher/runs/run_1/stop', { method: 'POST', headers: auth });
