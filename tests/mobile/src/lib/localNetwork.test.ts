@@ -102,6 +102,12 @@ describe('localNetworkHint', () => {
     expect(hint).toMatch(/Settings/);
   });
 
+  it("also after Expo's fetch error, which is a plain Error (the app's global fetch since SDK 58)", () => {
+    const expoFetchError = new Error('fetch failed: java.net.UnknownHostException: Unable to resolve host "bff.local"');
+
+    expect(localNetworkHint('http://bff.local:8787', expoFetchError, android17)).toMatch(/Nearby devices/);
+  });
+
   it.each([
     ['the BFF answered with an error', 'http://192.168.1.10:8787', new BffError('GET /bots failed (500)', 500), android17],
     ['the app is not paired', 'http://192.168.1.10:8787', new BffError('Not paired with a BFF'), android17],

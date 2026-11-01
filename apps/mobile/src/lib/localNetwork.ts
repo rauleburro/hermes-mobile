@@ -5,6 +5,7 @@
 // builds declare it (React Native's debug manifest), so there it can be denied.
 // See https://developer.android.com/privacy-and-security/local-network-permission
 import { Platform, PermissionsAndroid } from 'react-native';
+import { BffError } from './bff';
 
 type Env = { OS: string; Version: number | string };
 type Answer = 'granted' | 'denied' | 'never_ask_again';
@@ -81,10 +82,11 @@ export async function ensureLocalNetworkAccess(
 
 /**
  * The hint to show after `error` reaching the BFF at `url`, or null. Only for a network error
- * (fetch rejects with a TypeError; the BFF answering, or not being paired, is something else)
- * against a local address on Android 17 or later.
+ * against a local address on Android 17 or later. A network error is any failure that isn't a
+ * BffError (the BFF answering, or the app not being paired): Expo's global fetch rejects with a
+ * plain Error ("fetch failed: …"), React Native's with a TypeError.
  */
 export function localNetworkHint(url: string | null, error: unknown, env: Env = Platform): string | null {
-  if (!url || !(error instanceof TypeError) || !gated(url, env)) return null;
+  if (!url || !(error instanceof Error) || error instanceof BffError || !gated(url, env)) return null;
   return LOCAL_NETWORK_HINT;
 }
