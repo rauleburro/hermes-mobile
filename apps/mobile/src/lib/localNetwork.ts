@@ -104,7 +104,7 @@ function isNetworkFailure(error: unknown): boolean {
  * (a blocked local connection may also never answer, so the request times out) against a local
  * address on Android 17 or later.
  */
-export function localNetworkHint(url: string | null, error: unknown, env: Env = Platform): string | null {
+export function localNetworkHint(url: string | null, error: unknown, { env = Platform }: { env?: Env } = {}): string | null {
   if (!url || !isNetworkFailure(error) || !gated(url, env)) return null;
   return LOCAL_NETWORK_HINT;
 }

@@ -96,7 +96,7 @@ describe('localNetworkHint', () => {
   const networkError = new TypeError('Network request failed');
 
   it('names the Nearby devices permission and where to allow it after a network error to a local address', () => {
-    const hint = localNetworkHint('http://192.168.1.10:8787', networkError, android17);
+    const hint = localNetworkHint('http://192.168.1.10:8787', networkError, { env: android17 });
 
     expect(hint).toMatch(/Nearby devices/);
     expect(hint).toMatch(/Settings/);
@@ -105,17 +105,17 @@ describe('localNetworkHint', () => {
   it("also after Expo's fetch error, which is a plain Error (the app's global fetch since SDK 58)", () => {
     const expoFetchError = new Error('fetch failed: java.net.UnknownHostException: Unable to resolve host "bff.local"');
 
-    expect(localNetworkHint('http://bff.local:8787', expoFetchError, android17)).toMatch(/Nearby devices/);
+    expect(localNetworkHint('http://bff.local:8787', expoFetchError, { env: android17 })).toMatch(/Nearby devices/);
   });
 
   it("also after React Native's own fetch timeout", () => {
-    expect(localNetworkHint('http://192.168.1.10:8787', new TypeError('Network request timed out'), android17)).toMatch(/Nearby devices/);
+    expect(localNetworkHint('http://192.168.1.10:8787', new TypeError('Network request timed out'), { env: android17 })).toMatch(/Nearby devices/);
   });
 
   it('also after a request timeout: a blocked local connection never answers, so the app gives up at 15 s', () => {
     const timeout = new BffError('GET /bots timed out', undefined, 'timeout');
 
-    expect(localNetworkHint('http://192.168.1.10:8787', timeout, android17)).toMatch(/Nearby devices/);
+    expect(localNetworkHint('http://192.168.1.10:8787', timeout, { env: android17 })).toMatch(/Nearby devices/);
   });
 
   it.each([
@@ -132,6 +132,6 @@ describe('localNetworkHint', () => {
     ['Android is older than 17', 'http://192.168.1.10:8787', networkError, android16],
     ['the platform is iOS', 'http://192.168.1.10:8787', networkError, ios],
   ] as const)('stays quiet when %s', (_case, url, error, env) => {
-    expect(localNetworkHint(url, error, env)).toBeNull();
+    expect(localNetworkHint(url, error, { env })).toBeNull();
   });
 });

@@ -395,7 +395,7 @@ describe('HomeScreen on the local network (Android 17 Nearby devices)', () => {
 
   it('names Nearby devices when the roster request times out (Android drops blocked local traffic silently)', async () => {
     const { localNetworkHint: realHint } = jest.requireActual<typeof import('@mobile/lib/localNetwork')>('@mobile/lib/localNetwork');
-    jest.mocked(localNetworkHint).mockImplementation((url, error) => realHint(url, error, { OS: 'android', Version: 37 }));
+    jest.mocked(localNetworkHint).mockImplementation((url, error, options) => realHint(url, error, { ...options, env: { OS: 'android', Version: 37 } }));
     jest.mocked(listBots).mockRejectedValue(new BffError('GET /bots timed out', undefined, 'timeout'));
     await render(<HomeScreen />);
 

@@ -329,7 +329,7 @@ describe('PairScreen on the local network (Android 17 Nearby devices)', () => {
 
   it('keeps the denied Nearby devices hint when the health check then times out', async () => {
     const { localNetworkHint: realHint } = jest.requireActual<typeof import('@mobile/lib/localNetwork')>('@mobile/lib/localNetwork');
-    mockedHint.mockImplementation((url, error) => realHint(url, error, { OS: 'android', Version: 37 }));
+    mockedHint.mockImplementation((url, error, options) => realHint(url, error, { ...options, env: { OS: 'android', Version: 37 } }));
     mockedEnsureAccess.mockResolvedValue('denied');
     mockedCheckHealth.mockRejectedValue(new BffError('GET /health timed out', undefined, 'timeout'));
     await render(<PairScreen />);
@@ -356,7 +356,7 @@ describe('PairScreen on the local network (Android 17 Nearby devices)', () => {
 
   it('says the pairing could not be saved, not that the BFF is unreachable, when secure storage fails', async () => {
     const { localNetworkHint: realHint } = jest.requireActual<typeof import('@mobile/lib/localNetwork')>('@mobile/lib/localNetwork');
-    mockedHint.mockImplementation((url, error) => realHint(url, error, { OS: 'android', Version: 37 }));
+    mockedHint.mockImplementation((url, error, options) => realHint(url, error, { ...options, env: { OS: 'android', Version: 37 } }));
     mockedCheckHealth.mockResolvedValue({ ok: true, hermes: true });
     mockedSaveConfig.mockRejectedValue(new Error("Calling the 'setValueWithKeyAsync' function has failed"));
     await render(<PairScreen />);
