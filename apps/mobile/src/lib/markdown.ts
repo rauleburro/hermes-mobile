@@ -70,3 +70,78 @@ function containsOpenableLink(token: Token, depth = 0): boolean {
   ];
   return children.some((child) => containsOpenableLink(child, nests ? depth + 1 : depth));
 }
+
+/**
+ * What a reply reads as once rendered, as plain text: no Markdown markers, link labels without
+ * their URLs, image alt text, one line per block. It follows the renderer, so whatever the
+ * renderer shows literally (too large, too dense, too deep, raw HTML) stays as written.
+ * Pass `tokens` when the reply was already parsed (`null` means it is shown as plain text).
+ */
+export function markdownToPlainText(text: string, tokens: Token[] | null = parseMarkdown(text)): string {
+  return tokens ? blocksText(tokens, 0) : text;
+}
+
+const literal = (token: Token): string => ('text' in token && typeof token.text === 'string' ? token.text : token.raw);
+
+function blocksText(tokens: Token[], depth: number): string {
+  return tokens
+    .map((token) => blockText(token, depth))
+    .filter(Boolean)
+    .join('\n');
+}
+
+function blockText(token: Token, depth: number): string {
+  switch (token.type) {
+    case 'space':
+    case 'def':
+    case 'checkbox':
+    case 'hr':
+      return '';
+    case 'heading':
+    case 'paragraph':
+      return inlineText((token as Tokens.Heading | Tokens.Paragraph).tokens);
+    case 'text': {
+      const t = token as Tokens.Text;
+      return t.tokens ? inlineText(t.tokens) : t.text;
+    }
+    case 'list':
+      if (depth >= MAX_DEPTH) return token.raw.trimEnd();
+      return (token as Tokens.List).items
+        .map((item) => blocksText(item.tokens, depth + 1))
+        .filter(Boolean)
+        .join('\n');
+    case 'blockquote':
+      if (depth >= MAX_DEPTH) return token.raw.trimEnd();
+      return blocksText((token as Tokens.Blockquote).tokens, depth + 1);
+    case 'code':
+      return (token as Tokens.Code).text;
+    default:
+      // Raw HTML blocks, tables and anything else: the source text, as the renderer shows it.
+      return literal(token).trimEnd();
+  }
+}
+
+function inlineText(tokens: Token[]): string {
+  return tokens
+    .map((token) => {
+      switch (token.type) {
+        case 'strong':
+        case 'em':
+        case 'del':
+        case 'link':
+          return inlineText((token as Tokens.Strong | Tokens.Em | Tokens.Del | Tokens.Link).tokens);
+        case 'br':
+          return '\n';
+        case 'checkbox':
+          return '';
+        case 'text': {
+          const t = token as Tokens.Text;
+          return t.tokens ? inlineText(t.tokens) : t.text;
+        }
+        default:
+          // codespan, image (alt text), escape, inline HTML (literal) and anything unknown.
+          return literal(token);
+      }
+    })
+    .join('');
+}
