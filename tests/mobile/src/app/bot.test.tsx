@@ -377,7 +377,16 @@ describe('BotChatScreen', () => {
     await send('[e2e] ping');
     await waitFor(() => expect(followBotRun).toHaveBeenCalled());
 
-    emit({ event: 'approval.request', run_id: 'run-1', timestamp: 1, command: 'rm -rf /tmp/x', choices: ['once', 'deny'] });
+    emit({
+      event: 'approval.request',
+      run_id: 'run-1',
+      timestamp: 1,
+      kind: 'command',
+      prompt_id: 'p1',
+      execution_generation: 0,
+      command: 'rm -rf /tmp/x',
+      choices: ['once', 'deny'],
+    });
 
     await screen.findByText(/Working…/);
     expect(screen.queryByText(/rm -rf/)).toBeNull();

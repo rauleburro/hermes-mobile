@@ -1,5 +1,5 @@
 // Contract between the mobile app and the BFF. Hermes shapes mirror
-// gateway/platforms/api_server*.py (Hermes Agent v0.22.0).
+// gateway/platforms/api_server*.py (Hermes Agent v0.22.5).
 
 /** One entry of an assistant row's `tool_calls` (OpenAI shape; `arguments` is a JSON string). */
 export type ToolCall = {
@@ -70,28 +70,125 @@ export type RunStatus =
   | 'completed'
   | 'failed'
   | 'cancelled'
-  | 'interrupted';
+  | 'interrupted'
+  /** Hermes lost track of the run (e.g. after a restart). Not terminal: the run may still finish. */
+  | 'unknown';
+
+export const TERMINAL_STATUSES: ReadonlySet<RunStatus> = new Set<RunStatus>([
+  'completed',
+  'failed',
+  'cancelled',
+  'interrupted',
+]);
+
+export const isTerminalStatus = (status: string): boolean => TERMINAL_STATUSES.has(status as RunStatus);
 
 export type ApprovalChoice = 'once' | 'session' | 'always' | 'deny';
 
+/** Every frame carries `seq` (also sent as the SSE `id:`); events the app synthesizes may not. */
 type EventBase = { run_id: string; timestamp: number; seq?: number };
 
-/** Events on GET /v1/runs/{id}/events that the app renders. Others pass through as `unknown`. */
+/** Terminal `usage` counters, named as on the wire (gateway/platforms/api_server_runs.py `_USAGE_FIELDS`). */
+export type RunUsage = {
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+};
+
+/** Fields shared by run.completed / run.failed / run.cancelled / run.interrupted. */
+type TerminalFields = {
+  output?: string;
+  error?: string;
+  usage?: RunUsage;
+  /** The provider/model that actually served the turn. */
+  runtime?: {
+    provider?: string;
+    model?: string;
+    /** How the runtime was chosen (`global`, `raw_request`, `model_routes`, `session_model_lock`, ...). */
+    route_source?: string;
+    /** Present when the request named a model/provider: the asked-for pair. */
+    requested?: { provider?: string; model?: string };
+  };
+  completed?: boolean;
+  partial?: boolean;
+  interrupted?: boolean;
+  turn_exit_reason?: string;
+  /** Steer text the turn never delivered, for the client to replay. */
+  pending_steer?: string;
+  /** Extra failure detail on some run.failed events. */
+  reason?: string;
+};
+
+/**
+ * Events on GET /v1/runs/{id}/events (Hermes 0.22.5). `run.started` and `tool.failed`
+ * are not emitted on this endpoint: a failed tool arrives as `tool.completed` with `error: true`.
+ */
 export type RunEvent =
-  | (EventBase & { event: 'run.started' | 'run.queued' | 'run.stopping' })
+  | (EventBase & { event: 'run.queued'; message?: string })
+  | (EventBase & { event: 'run.stopping' })
   | (EventBase & { event: 'message.delta'; delta: string })
-  | (EventBase & { event: 'message.interim'; text: string; already_streamed?: boolean })
-  | (EventBase & { event: 'tool.started'; tool: string; preview?: string })
-  | (EventBase & { event: 'tool.completed' | 'tool.failed'; tool: string; duration?: number; error?: boolean; preview?: string })
-  | (EventBase & { event: 'approval.request'; command?: string; description?: string; choices: ApprovalChoice[]; request_id?: string; execution_generation?: number })
-  | (EventBase & { event: 'run.completed'; output?: string })
-  | (EventBase & { event: 'run.failed' | 'run.cancelled' | 'run.interrupted'; error?: string })
-  | (EventBase & { event: 'replay.truncated'; oldest_retained_seq: number });
+  | (EventBase & { event: 'message.interim'; text: string; already_streamed: boolean })
+  | (EventBase & { event: 'tool.started'; tool: string; preview: string; tool_call_id?: string })
+  | (EventBase & {
+      event: 'tool.completed';
+      tool: string;
+      duration: number;
+      error: boolean;
+      tool_call_id?: string;
+      preview?: string;
+    })
+  | (EventBase & { event: 'reasoning.available'; text: string })
+  | (EventBase & {
+      event: 'subagent.start' | 'subagent.complete';
+      /** Forwarded only when the agent set it. */
+      subagent_id?: string;
+      goal?: string;
+      status?: string;
+      summary?: string;
+    })
+  | (EventBase & {
+      event: 'approval.request';
+      kind: string;
+      /** Send it back as `request_id` in the approval body. */
+      prompt_id: string;
+      execution_generation: number;
+      command?: string;
+      description?: string;
+      choices: ApprovalChoice[];
+      timeout_s?: number;
+      edit?: unknown;
+    })
+  /** `resolved` is how many pending approvals the answer resolved. */
+  | (EventBase & { event: 'approval.responded'; choice: ApprovalChoice; request_id?: string; resolved: number })
+  | (EventBase & { event: 'approval.settled'; prompt_id: string; execution_generation: number })
+  | (EventBase & {
+      event: 'clarify.request';
+      prompt_id: string;
+      execution_generation: number;
+      question: string;
+      choices: string[];
+      multi_select: boolean;
+      timeout_s?: number;
+    })
+  | (EventBase & { event: 'clarify.settled'; prompt_id: string; execution_generation: number })
+  | (EventBase & { event: 'run.steered'; accepted: boolean })
+  | (EventBase & { event: 'replay.truncated'; oldest_retained_seq: number; requested_seq?: number })
+  | (EventBase & TerminalFields & { event: 'run.completed' | 'run.failed' | 'run.cancelled' | 'run.interrupted' });
 
 export const TERMINAL_EVENTS = new Set(['run.completed', 'run.failed', 'run.cancelled', 'run.interrupted']);
 
-/** Hermes 0.22.5 (session authority) requires exactly `request_id` + `execution_generation` + `choice`. */
-export type ApprovalRequest = { choice: ApprovalChoice; request_id: string; execution_generation: number };
+/**
+ * POST /v1/runs/{id}/approval. Hermes 0.22.5 (session authority) requires exactly these keys;
+ * `request_id` is the approval.request event's `prompt_id`.
+ */
+export type ApprovalRequest = { request_id: string; execution_generation: number; choice: ApprovalChoice };
+
+export type ApprovalResponse = { run_id: string; status: 'resolved' | 'already_resolved'; prompt_id: string };
+
+/** Hermes error body. Some 400s carry only `message` and `type`. */
+export type HermesError = { error: { message: string; type: string; param?: string | null; code?: string | null } };
 
 export type HealthResponse = { ok: boolean; hermes: boolean };
 
