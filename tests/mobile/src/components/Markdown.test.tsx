@@ -119,6 +119,99 @@ describe('Markdown', () => {
     expect(screen.getByText('<script>alert(1)</script>')).toBeOnTheScreen();
   });
 
+  it('opens mailto links', async () => {
+    const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
+    await render(<Markdown>{'[write us](mailto:team@example.com)'}</Markdown>);
+
+    fireEvent.press(screen.getByRole('link', { name: 'write us' }));
+
+    expect(openURL).toHaveBeenCalledWith('mailto:team@example.com');
+  });
+
+  it('does not open a blocked scheme that carries an https URL later on', async () => {
+    const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
+    await render(<Markdown>{'[pair](hermesmobile://pair?url=https://x.example)'}</Markdown>);
+
+    fireEvent.press(screen.getByText('pair'));
+
+    expect(openURL).not.toHaveBeenCalled();
+    expect(screen.queryByRole('link')).toBeNull();
+  });
+
+  it('shows images as their alt text only and never loads them', async () => {
+    const { toJSON } = await render(<Markdown>{'Look: ![a cat](https://tracker.example/cat.png)'}</Markdown>);
+
+    expect(screen.getByText('Look: a cat')).toBeOnTheScreen();
+    expect(JSON.stringify(toJSON())).not.toMatch(/"type":"Image"|tracker\.example/);
+  });
+
+  it('renders horizontal rules, strikethrough and hard line breaks', async () => {
+    await render(<Markdown>{'one  \ntwo\n\n---\n\n~~gone~~'}</Markdown>);
+
+    expect(screen.getByText('one\ntwo')).toBeOnTheScreen();
+    expect(screen.getByTestId('markdown-hr')).toBeOnTheScreen();
+    expect(styleOf(screen.getByText('gone')).textDecorationLine).toBe('line-through');
+  });
+
+  it('renders task list items with a checkbox instead of a stray [ ]', async () => {
+    await render(<Markdown>{'- [ ] todo\n- [x] done'}</Markdown>);
+
+    expect(screen.getByText('☐')).toBeOnTheScreen();
+    expect(screen.getByText('☑')).toBeOnTheScreen();
+    expect(screen.getByText('todo')).toBeOnTheScreen();
+    expect(screen.getByText('done')).toBeOnTheScreen();
+    expect(screen.queryByText(/\[[ x]\]/)).toBeNull();
+    expect(screen.queryByText('•')).toBeNull();
+  });
+
+  it('shows unsupported blocks such as tables as their source text', async () => {
+    await render(<Markdown>{'| a | b |\n|---|---|\n| 1 | 2 |'}</Markdown>);
+
+    expect(screen.getByText(/\| a \| b \|/)).toBeOnTheScreen();
+  });
+
+  describe('hostile input', () => {
+    it('falls back to plain text when the lexer overflows the stack (5000 nested quotes)', async () => {
+      const text = '>'.repeat(5000) + ' x';
+      await render(<Markdown>{text}</Markdown>);
+
+      expect(screen.getByText(text)).toBeOnTheScreen();
+    });
+
+    it('falls back to plain text for very deep nested lists', async () => {
+      const text = Array.from({ length: 2000 }, (_, i) => '  '.repeat(i) + '- x').join('\n');
+      await render(<Markdown>{text}</Markdown>);
+
+      expect(screen.getByText(text)).toBeOnTheScreen();
+    });
+
+    it('caps the rendered nesting depth and shows deeper content as plain text', async () => {
+      await render(<Markdown>{'>'.repeat(30) + ' deep'}</Markdown>);
+
+      expect(screen.getAllByTestId('markdown-blockquote').length).toBeLessThanOrEqual(8);
+      expect(screen.getByText(/deep/)).toBeOnTheScreen();
+    });
+
+    it('shows replies longer than the size cap as plain text', async () => {
+      const text = '**bold** '.repeat(4000); // 36 KB
+      await render(<Markdown>{text}</Markdown>);
+
+      expect(screen.getByText(text.trimEnd())).toBeOnTheScreen();
+    });
+
+    it.each([
+      ['*a ', 2000],
+      ['_a ', 8000],
+    ])('keeps emphasis-heavy paragraphs (%p x %p) fast by showing them as plain text', async (unit, count) => {
+      const text = unit.repeat(count).trimEnd();
+      const started = Date.now();
+      await render(<Markdown>{text}</Markdown>);
+
+      expect(screen.getByText(text)).toBeOnTheScreen();
+      expect(Date.now() - started).toBeLessThan(1000);
+    });
+  });
+
   it('keeps text readable in the dark theme', async () => {
     mockTheme = DARK;
     await render(<Markdown>{'plain text and `code`\n\n```\nblock\n```'}</Markdown>);

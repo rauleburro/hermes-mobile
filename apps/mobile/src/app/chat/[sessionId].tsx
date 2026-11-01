@@ -14,9 +14,11 @@ import {
   View,
 } from 'react-native';
 import { Markdown } from '@/components/Markdown';
-import { followRun,getMessages, resolveApproval, sendMessage, stopRun } from '@/lib/bff';
+import { followRun, getMessages, resolveApproval, sendMessage, stopRun } from '@/lib/bff';
 
-type Bubble = { key: string; role: 'user' | 'assistant' | 'status'; text: string };
+// `streaming` marks an assistant reply still being built from deltas: it stays plain
+// text (re-parsing Markdown on every delta is wasted work) until the final reload.
+type Bubble = { key: string; role: 'user' | 'assistant' | 'status'; text: string; streaming?: boolean };
 
 const APPROVAL_LABELS: Record<ApprovalChoice, string> = {
   once: 'Allow once',
@@ -65,7 +67,7 @@ export default function ChatScreen() {
         setPending((p) => {
           const last = p.at(-1);
           if (last?.role === 'assistant') return [...p.slice(0, -1), { ...last, text: last.text + event.delta }];
-          return [...p, { key: `a-${event.seq ?? Date.now()}`, role: 'assistant', text: event.delta }];
+          return [...p, { key: `a-${event.seq ?? Date.now()}`, role: 'assistant', text: event.delta, streaming: true }];
         });
         break;
       case 'tool.started':
@@ -146,10 +148,10 @@ export default function ChatScreen() {
                   ? [styles.user, { backgroundColor: colors.primary }]
                   : [styles.assistant, { backgroundColor: colors.card, borderColor: colors.border }],
               ]}>
-              {item.role === 'assistant' ? (
+              {item.role === 'assistant' && !item.streaming ? (
                 <Markdown>{item.text}</Markdown>
               ) : (
-                <Text selectable style={{ color: '#fff', fontSize: 16 }}>
+                <Text selectable style={{ color: item.role === 'user' ? '#fff' : colors.text, fontSize: 16 }}>
                   {item.text}
                 </Text>
               )}
