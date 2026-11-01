@@ -79,8 +79,12 @@ describe('identifiers validation', () => {
     expect(identifiers({ APP_ANDROID_PACKAGE: 'com.my_fork.app' }).android.package).toBe('com.my_fork.app');
   });
 
-  it.each(['Has Space', 'a/b', '-lead'])('rejects APP_SLUG=%j', (slug) => {
+  it.each(['Has Space', 'a/b', '-lead', 'My_Bots', 'MyBots', 'my_bots', 'my.bots'])('rejects APP_SLUG=%j (Expo would slugify it, breaking exp+<slug>://)', (slug) => {
     expect(() => identifiers({ APP_SLUG: slug })).toThrow(/APP_SLUG/);
+  });
+
+  it.each(['forkbots', 'fork-bots', 'bots2', '2bots'])('accepts APP_SLUG=%s', (slug) => {
+    expect(identifiers({ APP_SLUG: slug }).slug).toBe(slug);
   });
 
   it('reports every invalid variable at once, with the bad value', () => {

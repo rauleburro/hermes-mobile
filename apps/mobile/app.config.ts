@@ -26,13 +26,14 @@ type Name = keyof typeof DEFAULTS;
 
 // Lowercase only: Android intent-filter schemes are case-sensitive. http(s) would hijack web links.
 const isScheme = (v: string) => /^[a-z][a-z0-9+.-]*$/.test(v) && v !== 'http' && v !== 'https';
-const isSlug = (v: string) => /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(v);
+// Lowercase letters, digits and "-" only: Expo slugifies anything else, which would break `exp+<slug>://`.
+const isSlug = (v: string) => /^[a-z0-9][a-z0-9-]*$/.test(v);
 // Reverse-DNS: at least two dot-separated segments, each starting with a letter.
 const isBundleId = (v: string) => /^[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z][A-Za-z0-9-]*)+$/.test(v);
 const isAndroidPackage = (v: string) => /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/.test(v);
 
 const RULES: Partial<Record<Name, [(v: string) => boolean, string]>> = {
-  APP_SLUG: [isSlug, 'letters, digits, "-" and "_", not starting with a symbol'],
+  APP_SLUG: [isSlug, 'lowercase letters, digits and "-", not starting with "-"'],
   APP_SCHEME: [isScheme, 'a lowercase URI scheme (letters, digits, "+", "-", "."; starting with a letter; not http/https)'],
   APP_BUNDLE_ID: [isBundleId, 'a reverse-DNS id such as com.example.app (letters, digits, "-")'],
   APP_ANDROID_PACKAGE: [isAndroidPackage, 'a reverse-DNS package such as com.example.app (letters, digits, "_"; no "-")'],
