@@ -1,6 +1,6 @@
 // Android 17 (API 37) local network protection: traffic to a local-network address needs the
 // runtime permission ACCESS_LOCAL_NETWORK, shown to users as "Nearby devices". Without it a
-// request to a BFF on the LAN is blocked, which in practice hangs until the connect timeout.
+// request to a BFF on the LAN is blocked, which in practice hangs until the app gives up (15 s).
 // Apps that target API 36 or lower and don't declare it get it implicitly with INTERNET; debug
 // builds declare it (React Native's debug manifest), so there it can be denied.
 // See https://developer.android.com/privacy-and-security/local-network-permission
@@ -81,12 +81,23 @@ export async function ensureLocalNetworkAccess(
 }
 
 /**
- * The hint to show after `error` reaching the BFF at `url`, or null. Only for a network error
- * against a local address on Android 17 or later. A network error is any failure that isn't a
- * BffError (the BFF answering, or the app not being paired): Expo's global fetch rejects with a
- * plain Error ("fetch failed: …"), React Native's with a TypeError.
+ * Whether `error` means the BFF couldn't be reached: any failure that isn't a BffError (Expo's
+ * global fetch rejects with a plain Error, "fetch failed: …", React Native's with a TypeError),
+ * or the app's own request timeout (a BffError with code `timeout` and no HTTP status). Other
+ * BffErrors mean the BFF answered, the app isn't paired, or the app aborted the request.
+ */
+function isNetworkFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (!(error instanceof BffError)) return true;
+  return error.code === 'timeout' && error.status === undefined;
+}
+
+/**
+ * The hint to show after `error` reaching the BFF at `url`, or null. Only for a network failure
+ * (a blocked local connection may also never answer, so the request times out) against a local
+ * address on Android 17 or later.
  */
 export function localNetworkHint(url: string | null, error: unknown, env: Env = Platform): string | null {
-  if (!url || !(error instanceof Error) || error instanceof BffError || !gated(url, env)) return null;
+  if (!url || !isNetworkFailure(error) || !gated(url, env)) return null;
   return LOCAL_NETWORK_HINT;
 }

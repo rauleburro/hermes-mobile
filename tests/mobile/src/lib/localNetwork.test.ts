@@ -108,9 +108,17 @@ describe('localNetworkHint', () => {
     expect(localNetworkHint('http://bff.local:8787', expoFetchError, android17)).toMatch(/Nearby devices/);
   });
 
+  it('also after a request timeout: a blocked local connection never answers, so the app gives up at 15 s', () => {
+    const timeout = new BffError('GET /bots timed out', undefined, 'timeout');
+
+    expect(localNetworkHint('http://192.168.1.10:8787', timeout, android17)).toMatch(/Nearby devices/);
+  });
+
   it.each([
     ['the BFF answered with an error', 'http://192.168.1.10:8787', new BffError('GET /bots failed (500)', 500), android17],
     ['the app is not paired', 'http://192.168.1.10:8787', new BffError('Not paired with a BFF'), android17],
+    ['the request was aborted by the app', 'http://192.168.1.10:8787', new BffError('GET /bots aborted', undefined, 'aborted'), android17],
+    ['a timeout carries an HTTP status', 'http://192.168.1.10:8787', new BffError('GET /bots failed (504)', 504, 'timeout'), android17],
     ['the address is loopback', 'http://localhost:8787', networkError, android17],
     ['the address is public', 'https://bff.example.com', networkError, android17],
     ['there is no URL', null, networkError, android17],

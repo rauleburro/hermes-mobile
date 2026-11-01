@@ -78,7 +78,7 @@ export default function PairScreen() {
         return;
       }
       const config = { url: normalized, token: token.trim() };
-      // Without Nearby devices a local request hangs for minutes: say why now, and still try
+      // Without Nearby devices a local request hangs until the 15 s request timeout: say why now, and still try
       // (a build that doesn't declare the permission is "denied" yet keeps local access).
       const access = await ensureLocalNetworkAccess(normalized).catch(() => 'unknown');
       if (access === 'denied') setNetworkHint(LOCAL_NETWORK_HINT);
