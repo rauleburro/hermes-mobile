@@ -20,7 +20,7 @@ export const DEFAULT_STEPS = [
   { name: "test", command: "pnpm", args: ["test"] },
   { name: "typecheck", command: "pnpm", args: ["typecheck"] },
   { name: "lint", command: "pnpm", args: ["lint"] },
-  { name: "hygiene", command: process.execPath, args: ["scripts/hygiene.mjs"] },
+  { name: "hygiene", command: "node", args: ["scripts/hygiene.mjs"] },
 ];
 
 /**
