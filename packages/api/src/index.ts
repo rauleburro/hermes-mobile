@@ -1,16 +1,6 @@
 // Contract between the mobile app and the BFF. Hermes shapes mirror
 // gateway/platforms/api_server*.py (Hermes Agent v0.22.0).
 
-export type SessionSummary = {
-  id: string;
-  title?: string | null;
-  source?: string | null;
-  started_at?: number | string | null;
-  last_active?: number | string | null;
-  message_count?: number | null;
-  preview?: string | null;
-};
-
 export type SessionMessage = {
   id?: string | number;
   role: 'user' | 'assistant' | 'system' | 'tool';
