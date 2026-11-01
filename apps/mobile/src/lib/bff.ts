@@ -1,5 +1,6 @@
 import type {
   BotChatResponse,
+  BotSendRequest,
   BotsResponse,
   HealthResponse,
   RunEvent,
@@ -67,7 +68,7 @@ export async function sendBotMessage(botId: string, clientMessageId: string, tex
     try {
       return await request<SendMessageResponse>(`${bot(botId)}/send`, {
         method: 'POST',
-        body: JSON.stringify({ clientMessageId, text }),
+        body: JSON.stringify({ clientMessageId, text } satisfies BotSendRequest),
       });
     } catch (error) {
       lastError = error;
