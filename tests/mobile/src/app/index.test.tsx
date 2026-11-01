@@ -1,9 +1,10 @@
-import type { BotSummary, BotsResponse } from '@hermes-mobile/api';
+import type { BotSummary, BotsResponse, SessionMessage } from '@hermes-mobile/api';
 import { act, fireEvent, render, screen, userEvent, waitFor } from '@testing-library/react-native';
 import { router } from 'expo-router';
 import HomeScreen from '@mobile/app/index';
 import { BffError, getBotChat, getBotMessages, listBots } from '@mobile/lib/bff';
-import { loadConfig } from '@mobile/lib/config';
+import { bindCache, cacheStorage, readRoster, writeRoster } from '@mobile/lib/cache';
+import { loadConfig, pairedUrl } from '@mobile/lib/config';
 
 jest.mock('expo-router', () => {
   const { useEffect } = jest.requireActual('react');
@@ -18,7 +19,7 @@ jest.mock('@mobile/lib/bff', () => {
   const actual = jest.requireActual('@mobile/lib/bff');
   return { BffError: actual.BffError, listBots: jest.fn(), getBotChat: jest.fn(), getBotMessages: jest.fn() };
 });
-jest.mock('@mobile/lib/config', () => ({ loadConfig: jest.fn() }));
+jest.mock('@mobile/lib/config', () => ({ loadConfig: jest.fn(), pairedUrl: jest.fn() }));
 
 const bot = (over: Partial<BotSummary>): BotSummary => ({
   id: 'default',
@@ -35,7 +36,9 @@ function roster(bots: BotSummary[], botModeEnabled = true) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  cacheStorage().clearAll();
   jest.mocked(loadConfig).mockResolvedValue({ url: 'http://bff.local:8787', token: 'secret' });
+  jest.mocked(pairedUrl).mockReturnValue('http://bff.local:8787');
   jest.mocked(getBotChat).mockImplementation(async (botId) => ({ botId, sessionId: `chat-${botId}` }));
   jest.mocked(getBotMessages).mockResolvedValue([]);
 });
@@ -209,5 +212,118 @@ describe('HomeScreen (Bots roster)', () => {
     await screen.findByText('Hermes');
 
     expect(screen.queryByText('New')).toBeNull();
+  });
+});
+
+describe('HomeScreen with the local cache', () => {
+  const BFF = 'http://bff.local:8787';
+  const OTHER = 'http://other.local:8787';
+  const never = () => new Promise<never>(() => {});
+
+  function cached(bots: BotSummary[], previews: Record<string, string> = {}, owner = BFF) {
+    bindCache(owner);
+    writeRoster(owner, { botModeEnabled: true, bots }, previews);
+  }
+
+  /** Lets a test decide when the pending `GET /bots` answers. */
+  function pendingRoster() {
+    let answer: (r: BotsResponse) => void = () => {};
+    jest.mocked(listBots).mockImplementation(() => new Promise((resolve) => (answer = resolve)));
+    return (bots: BotSummary[]) => act(async () => answer({ botModeEnabled: true, bots }));
+  }
+
+  it('paints the cached roster and previews immediately, marked as updating', async () => {
+    cached([bot({ id: 'default', name: 'Hermes', title: 'Personal assistant' })], { default: 'saved pong' });
+    jest.mocked(listBots).mockImplementation(never);
+    await render(<HomeScreen />);
+
+    expect(screen.getByText('Hermes')).toBeOnTheScreen();
+    expect(screen.getByText('Personal assistant')).toBeOnTheScreen();
+    expect(screen.getByText('saved pong')).toBeOnTheScreen();
+    expect(screen.getByText('Updating…')).toBeOnTheScreen();
+  });
+
+  it('replaces the cached roster with the fresh one and saves it', async () => {
+    cached([bot({ id: 'old', name: 'Old Bot' })], { old: 'old preview' });
+    roster([bot({ id: 'default', name: 'Hermes' })]);
+    jest.mocked(getBotMessages).mockResolvedValue([{ role: 'assistant', content: 'fresh pong' }]);
+    await render(<HomeScreen />);
+
+    expect(await screen.findByText('fresh pong')).toBeOnTheScreen();
+    expect(screen.queryByText('Old Bot')).toBeNull();
+    expect(screen.queryByText('Updating…')).toBeNull();
+    expect(screen.queryByText(/showing saved/)).toBeNull();
+    expect(readRoster(BFF)).toMatchObject({
+      roster: { bots: [expect.objectContaining({ id: 'default', name: 'Hermes' })] },
+      previews: { default: 'fresh pong' },
+    });
+  });
+
+  it('keeps showing the saved roster with an offline hint when the BFF cannot be reached', async () => {
+    cached([bot({ id: 'default', name: 'Hermes' })], { default: 'saved pong' });
+    jest.mocked(listBots).mockRejectedValue(new TypeError('Network request failed'));
+    await render(<HomeScreen />);
+
+    expect(await screen.findByText('Offline · showing saved data')).toBeOnTheScreen();
+    expect(screen.getByText('Hermes')).toBeOnTheScreen();
+    expect(screen.getByText('saved pong')).toBeOnTheScreen();
+    expect(screen.queryByText('Updating…')).toBeNull();
+    expect(readRoster(BFF)?.previews).toEqual({ default: 'saved pong' });
+  });
+
+  it("shows the BFF's error, not 'Offline', next to the saved roster when the BFF answered with one", async () => {
+    cached([bot({ id: 'default', name: 'Hermes' })]);
+    jest.mocked(listBots).mockRejectedValue(new BffError('GET /bots failed (401)', 401, 'unauthorized'));
+    await render(<HomeScreen />);
+
+    expect(await screen.findByText('GET /bots failed (401) · showing saved data')).toBeOnTheScreen();
+    expect(screen.queryByText(/Offline/)).toBeNull();
+    expect(screen.getByText('Hermes')).toBeOnTheScreen();
+  });
+
+  it('caches nothing and shows the plain error when the first load fails', async () => {
+    jest.mocked(listBots).mockRejectedValue(new Error('GET /bots failed (502)'));
+    await render(<HomeScreen />);
+
+    expect(await screen.findByText('GET /bots failed (502)')).toBeOnTheScreen();
+    expect(screen.queryByText(/showing saved/)).toBeNull();
+    expect(readRoster(BFF)).toBeNull();
+  });
+
+  it('never paints a saved roster that belongs to another BFF than the paired one', async () => {
+    cached([bot({ id: 'alpha', name: 'Alpha Bot' })], {}, OTHER);
+    jest.mocked(listBots).mockImplementation(never);
+    await render(<HomeScreen />);
+
+    expect(screen.queryByText('Alpha Bot')).toBeNull();
+    expect(screen.queryByText('Updating…')).toBeNull();
+  });
+
+  it("never saves a roster that lands after re-pairing into the new BFF's cache", async () => {
+    bindCache(BFF);
+    const answer = pendingRoster();
+    await render(<HomeScreen />);
+    bindCache(OTHER); // Paired with another BFF while GET /bots to the first one is in flight.
+
+    await answer([bot({ id: 'alpha', name: 'Alpha from one' })]);
+
+    expect(readRoster(OTHER)).toBeNull();
+    expect(cacheStorage().getAllKeys()).toEqual(['meta']);
+  });
+
+  it("never saves a preview that lands after re-pairing into the new BFF's cache", async () => {
+    bindCache(BFF);
+    let preview: (m: SessionMessage[]) => void = () => {};
+    jest.mocked(getBotMessages).mockImplementation(() => new Promise((resolve) => (preview = resolve)));
+    roster([bot({ id: 'default', name: 'Hermes' })]);
+    await render(<HomeScreen />);
+    await screen.findByText('Hermes');
+    await waitFor(() => expect(getBotMessages).toHaveBeenCalled());
+    bindCache(OTHER);
+
+    await act(async () => preview([{ role: 'assistant', content: 'pong from one' }]));
+
+    expect(readRoster(OTHER)).toBeNull();
+    expect(cacheStorage().getAllKeys()).toEqual(['meta']);
   });
 });

@@ -1,12 +1,13 @@
 import type { BotSummary, BotsResponse } from '@hermes-mobile/api';
 import { router, Stack, useFocusEffect, useTheme } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { BotAvatar } from '@/components/BotAvatar';
 import { BotModeDisabled } from '@/components/BotModeDisabled';
 import { BffError, getBotChat, getBotMessages, listBots } from '@/lib/bff';
 import { lastMessagePreview } from '@/lib/bots';
-import { loadConfig } from '@/lib/config';
+import { bindCache, readRoster, savedDataHint, writeRoster } from '@/lib/cache';
+import { loadConfig, pairedUrl } from '@/lib/config';
 
 const NO_BOT_CHAT = 'No Bot Chat yet';
 
@@ -22,24 +23,51 @@ async function loadPreview(botId: string): Promise<string | undefined> {
 
 export default function HomeScreen() {
   const { colors } = useTheme();
-  const [roster, setRoster] = useState<BotsResponse | null>(null);
-  const [previews, setPreviews] = useState<Record<string, string | undefined>>({});
+  // First paint comes from the paired BFF's saved roster (synchronous), then the BFF replaces it.
+  const [initial] = useState(() => {
+    const url = pairedUrl();
+    const saved = readRoster(url);
+    return { saved, owner: saved ? url : null };
+  });
+  const [roster, setRoster] = useState<BotsResponse | null>(initial.saved?.roster ?? null);
+  const [previews, setPreviews] = useState<Record<string, string | undefined>>(initial.saved?.previews ?? {});
+  /** The BFF the roster on screen came from; set together with the roster, so a save never mislabels it. */
+  const [rosterOwner, setRosterOwner] = useState<string | null>(initial.owner);
+  /** True while the roster on screen is the saved copy, not a fresh answer from the BFF. */
+  const [fromCache, setFromCache] = useState(initial.saved !== null);
+  /** The BFF the last refresh asked, to notice a re-pairing. */
+  const owner = useRef(initial.owner);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Why the saved roster is on screen after a failed refresh ("Offline", or the BFF's error). */
+  const [savedHint, setSavedHint] = useState<string | null>(null);
   // Each refresh bumps this; previews from an older refresh are dropped when they land.
   const generation = useRef(0);
 
   const refresh = useCallback(async () => {
-    if (!(await loadConfig())) {
+    const config = await loadConfig();
+    if (!config) {
       router.push('/pair');
       return;
     }
+    const url = config.url;
+    bindCache(url);
+    if (owner.current !== null && owner.current !== url) {
+      // Paired with another BFF since this roster was loaded: never show its data.
+      setRoster(null);
+      setRosterOwner(null);
+      setPreviews({});
+      setFromCache(false);
+    }
+    owner.current = url;
     const current = ++generation.current;
     setLoading(true);
     try {
       const next = await listBots();
       if (current !== generation.current) return;
       setRoster(next);
+      setRosterOwner(url);
+      setFromCache(false);
       setError(null);
       // Previews fill in after the roster renders; one failing Bot never blanks the list.
       next.bots
@@ -50,12 +78,21 @@ export default function HomeScreen() {
           }),
         );
     } catch (e) {
-      if (current === generation.current) setError((e as Error).message);
+      if (current === generation.current) {
+        setError((e as Error).message);
+        setSavedHint(savedDataHint(e, 'data'));
+      }
     } finally {
       // Only the latest refresh owns the spinner.
       if (current === generation.current) setLoading(false);
     }
   }, []);
+
+  // Only fresh data is saved, under the BFF it came from: a failed refresh never overwrites the
+  // cache, and a fetch that lands after re-pairing is refused by the new BFF's cache.
+  useEffect(() => {
+    if (roster && rosterOwner && !fromCache) writeRoster(rosterOwner, roster, previews);
+  }, [roster, rosterOwner, previews, fromCache]);
 
   useFocusEffect(
     useCallback(() => {
@@ -117,7 +154,13 @@ export default function HomeScreen() {
         keyExtractor={(b) => b.id}
         refreshing={loading}
         onRefresh={refresh}
-        ListHeaderComponent={error ? <Text style={[styles.error, { color: colors.notification }]}>{error}</Text> : undefined}
+        ListHeaderComponent={
+          fromCache && (loading || error) ? (
+            <Text style={[styles.hint, { color: colors.text }]}>{error ? savedHint : 'Updating…'}</Text>
+          ) : error ? (
+            <Text style={[styles.error, { color: colors.notification }]}>{error}</Text>
+          ) : undefined
+        }
         ListEmptyComponent={
           roster && !error ? (
             <Text style={[styles.empty, { color: colors.text }]}>No Bots yet. Create one in Hermes Desktop (Bots tab).</Text>
@@ -144,4 +187,5 @@ const styles = StyleSheet.create({
   preview: { fontSize: 14, opacity: 0.6 },
   empty: { textAlign: 'center', marginTop: 48, opacity: 0.6, paddingHorizontal: 24 },
   error: { padding: 16 },
+  hint: { paddingHorizontal: 16, paddingVertical: 6, fontSize: 12, opacity: 0.6, textAlign: 'center' },
 });

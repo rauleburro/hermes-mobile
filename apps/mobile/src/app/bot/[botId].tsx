@@ -3,6 +3,7 @@ import * as Crypto from 'expo-crypto';
 import { Stack, useLocalSearchParams, useTheme } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  AppState,
   Button,
   FlatList,
   KeyboardAvoidingView,
@@ -14,6 +15,8 @@ import {
 } from 'react-native';
 import { MessageBubble, type MessageRole } from '@/components/MessageBubble';
 import { BffError, followBotRun, getBotChat, getBotMessages, sendBotMessage, stopBotRun } from '@/lib/bff';
+import { dropChat, readChat, savedDataHint, writeChat } from '@/lib/cache';
+import { loadConfig, pairedUrl } from '@/lib/config';
 
 /** `id` is the Hermes message id (history rows only); ids grow monotonically within a session. */
 type Line = { key: string; role: MessageRole | 'status'; text: string; id?: number };
@@ -52,7 +55,10 @@ type Notice =
   | { kind: 'lost'; message: string }
   | { kind: 'info'; message: string };
 
-function toLines(messages: SessionMessage[]): Line[] {
+/** The paired BFF's URL, read before a fetch so its result is saved under the BFF it came from. */
+const currentBff = () => loadConfig().then((c) => c?.url ?? null, () => null);
+
+function toLines(messages: Pick<SessionMessage, 'id' | 'role' | 'content'>[]): Line[] {
   return messages
     .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content)
     .map((m, i) => ({ key: `h-${m.id ?? i}`, role: m.role as MessageRole, text: m.content ?? '', id: numericId(m.id) }));
@@ -72,8 +78,21 @@ function useElapsed(since: number | null) {
 export default function BotChatScreen() {
   const { botId, name } = useLocalSearchParams<{ botId: string; name?: string }>();
   const { colors } = useTheme();
-  const [state, setState] = useState<ChatState>({ kind: 'loading' });
-  const [history, setHistory] = useState<Line[]>([]);
+  // First paint comes from the paired BFF's saved copy (synchronous), then the BFF replaces it.
+  const [saved] = useState(() => readChat(pairedUrl(), botId));
+  const [state, setState] = useState<ChatState>(saved ? { kind: 'ready', sessionId: saved.sessionId } : { kind: 'loading' });
+  const [history, setHistory] = useState<Line[]>(() => (saved ? toLines(saved.messages) : []));
+  /** Whether the history on screen is the BFF's answer or the saved copy (being refreshed, or offline). */
+  const [freshness, setFreshness] = useState<'fresh' | 'updating' | 'offline'>(saved ? 'updating' : 'fresh');
+  /** Why the saved copy is on screen after a failed load ("Offline", or the BFF's error). */
+  const [savedHint, setSavedHint] = useState<string | null>(null);
+  /** Whether a history (saved or fresh) is on screen, so a failed load keeps it rather than erroring. */
+  const shownRef = useRef(saved !== null);
+  const freshnessRef = useRef(freshness);
+  useEffect(() => {
+    freshnessRef.current = freshness;
+  }, [freshness]);
+  const loadGenRef = useRef(0);
   const [pending, setPending] = useState<Line[]>([]);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [draft, setDraft] = useState('');
@@ -84,27 +103,59 @@ export default function BotChatScreen() {
   const baselineRef = useRef<Baseline>({ maxId: null, count: 0 });
   const elapsed = useElapsed(workingSince);
 
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      try {
-        const { sessionId } = await getBotChat(botId);
-        const messages = await getBotMessages(botId, sessionId);
-        if (!active) return;
-        setHistory(toLines(messages));
-        setState({ kind: 'ready', sessionId });
-      } catch (e) {
-        if (!active) return;
-        if (e instanceof BffError && e.code === 'bot_chat_missing') setState({ kind: 'missing' });
-        else if (e instanceof BffError && e.code === 'bot_unreachable') setState({ kind: 'unreachable' });
-        else setState({ kind: 'error', message: (e as Error).message });
+  /** Loads the Bot Chat from the BFF and replaces whatever is on screen. Only the latest load applies. */
+  const load = useCallback(async () => {
+    const gen = ++loadGenRef.current;
+    const bff = await currentBff();
+    if (shownRef.current) setFreshness((f) => (f === 'fresh' ? f : 'updating'));
+    try {
+      const { sessionId } = await getBotChat(botId);
+      const messages = await getBotMessages(botId, sessionId);
+      if (gen !== loadGenRef.current) return;
+      if (bff) writeChat(bff, botId, sessionId, messages);
+      shownRef.current = true;
+      setHistory(toLines(messages));
+      setState({ kind: 'ready', sessionId });
+      setFreshness('fresh');
+    } catch (e) {
+      if (gen !== loadGenRef.current) return;
+      const missing = e instanceof BffError && e.code === 'bot_chat_missing';
+      const unreachable = e instanceof BffError && e.code === 'bot_unreachable';
+      if (missing || unreachable) {
+        dropChat(botId); // The BFF's answer beats the saved copy.
+        shownRef.current = false;
+        setFreshness('fresh');
       }
-    })();
+      if (missing) setState({ kind: 'missing' });
+      else if (unreachable) setState({ kind: 'unreachable' });
+      else if (shownRef.current) {
+        setSavedHint(savedDataHint(e, 'messages'));
+        setFreshness('offline');
+      } else setState({ kind: 'error', message: (e as Error).message });
+    }
+  }, [botId]);
+
+  useEffect(() => {
+    // State only changes once the load has data (load awaits first); scheduling it keeps that explicit.
+    let live = true;
+    Promise.resolve().then(() => {
+      if (live) load();
+    });
+    const loads = loadGenRef;
     return () => {
-      active = false;
+      live = false;
+      loads.current++; // Drop a load still in flight.
       abortRef.current?.abort();
     };
-  }, [botId]);
+  }, [load]);
+
+  // Showing the saved copy: try again when the app comes back to the foreground.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (status) => {
+      if (status === 'active' && freshnessRef.current !== 'fresh') load();
+    });
+    return () => sub.remove();
+  }, [load]);
 
   // Bot Chat turns go through Hermes' Bot Chat queue: the stream only carries the final event.
   // Approval requests are not actionable for Bot Chat runs through the API, so they are ignored.
@@ -126,7 +177,11 @@ export default function BotChatScreen() {
    * (after the baseline) with the same role, so an older identical reply never swallows it.
    */
   async function reconcile(sessionId: string) {
-    const fresh = toLines(await getBotMessages(botId, sessionId));
+    const bff = await currentBff();
+    const messages = await getBotMessages(botId, sessionId);
+    if (bff) writeChat(bff, botId, sessionId, messages);
+    setFreshness('fresh');
+    const fresh = toLines(messages);
     const added = rowsAfter(fresh, baselineRef.current);
     const newCount = { user: added.filter((l) => l.role === 'user').length, assistant: added.filter((l) => l.role === 'assistant').length };
     setHistory(fresh);
@@ -169,7 +224,8 @@ export default function BotChatScreen() {
 
   function send() {
     const text = draft.trim();
-    if (!text || workingSince !== null || state.kind !== 'ready') return;
+    // Only send against the BFF's history: the turn is reconciled against it (baseline).
+    if (!text || workingSince !== null || state.kind !== 'ready' || freshness !== 'fresh') return;
     const clientMessageId = Crypto.randomUUID();
     baselineRef.current = baselineOf(history);
     // A message that was never sent is given up when the user sends a different one;
@@ -237,6 +293,12 @@ export default function BotChatScreen() {
   return (
     <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={90}>
       {header}
+      {freshness !== 'fresh' ? (
+        <View style={styles.hintRow}>
+          <Text style={[styles.hint, { color: colors.text }]}>{freshness === 'offline' ? savedHint : 'Updating…'}</Text>
+          {freshness === 'offline' ? <Button title="Retry" onPress={load} /> : null}
+        </View>
+      ) : null}
       <FlatList
         style={styles.flex}
         contentContainerStyle={styles.list}
@@ -273,7 +335,7 @@ export default function BotChatScreen() {
           multiline
           editable={!working}
         />
-        <Button title="Send" onPress={send} disabled={!draft.trim() || working} />
+        <Button title="Send" onPress={send} disabled={!draft.trim() || working || freshness !== 'fresh'} />
       </View>
     </KeyboardAvoidingView>
   );
@@ -283,6 +345,8 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   list: { padding: 12, gap: 8 },
   status: { alignSelf: 'center', opacity: 0.6, fontSize: 13 },
+  hintRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 2 },
+  hint: { textAlign: 'center', opacity: 0.6, fontSize: 12, paddingVertical: 4 },
   notice: { flex: 1, padding: 24, justifyContent: 'center' },
   noticeText: { fontSize: 16, textAlign: 'center', lineHeight: 22 },
   banner: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 6, borderTopWidth: StyleSheet.hairlineWidth },
