@@ -101,7 +101,16 @@ export default function HomeScreen() {
   );
 
   const header = (
-    <Stack.Screen options={{ headerLeft: () => <Button title="Pair" onPress={() => router.push('/pair')} /> }} />
+    <Stack.Screen
+      options={{
+        headerLeft: () => (
+          // The native header puts the title right after headerLeft: keep a gap.
+          <View testID="pair-action" style={styles.headerAction}>
+            <Button title="Pair" onPress={() => router.push('/pair')} />
+          </View>
+        ),
+      }}
+    />
   );
 
   if (roster && !roster.botModeEnabled) {
@@ -173,6 +182,7 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
+  headerAction: { marginEnd: 16 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

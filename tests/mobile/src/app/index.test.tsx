@@ -1,5 +1,6 @@
 import type { BotSummary, BotsResponse, SessionMessage } from '@hermes-mobile/api';
 import { act, fireEvent, render, screen, userEvent, waitFor } from '@testing-library/react-native';
+import { StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import HomeScreen from '@mobile/app/index';
 import { BffError, getBotChat, getBotMessages, listBots } from '@mobile/lib/bff';
@@ -10,7 +11,8 @@ jest.mock('expo-router', () => {
   const { useEffect } = jest.requireActual('react');
   return {
     router: { push: jest.fn() },
-    Stack: { Screen: () => null },
+    // Render the header's Pair button so tests can see it.
+    Stack: { Screen: ({ options }: { options?: { headerLeft?: () => unknown } }) => options?.headerLeft?.() ?? null },
     useFocusEffect: (effect: () => void) => useEffect(effect, [effect]),
     useTheme: () => ({ colors: { text: 'black', border: 'gray', notification: 'red', card: 'white', primary: 'blue' } }),
   };
@@ -325,5 +327,20 @@ describe('HomeScreen with the local cache', () => {
 
     expect(readRoster(OTHER)).toBeNull();
     expect(cacheStorage().getAllKeys()).toEqual(['meta']);
+  });
+});
+
+describe('HomeScreen header', () => {
+  it('opens the pair screen from a Pair button that keeps a gap before the "Bots" title', async () => {
+    roster([bot({})]);
+    await render(<HomeScreen />);
+    jest.mocked(router.push).mockClear();
+
+    const pair = screen.getByRole('button', { name: 'Pair' });
+    await userEvent.setup().press(pair);
+    expect(router.push).toHaveBeenCalledWith('/pair');
+
+    const action = StyleSheet.flatten(screen.getByTestId('pair-action').props.style);
+    expect(action.marginEnd).toBeGreaterThanOrEqual(12);
   });
 });
