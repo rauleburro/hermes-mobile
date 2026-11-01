@@ -318,8 +318,8 @@ describe('Bot Chat turns', () => {
     expect(events).toEqual([expect.objectContaining({ event: 'run.completed', output: 'done' })]);
   });
 
-  // Hermes closes a run's stream cleanly with the run still `queued` when it hands admission to
-  // the next gateway owner, and a reconnect replays that close at once: reconnect, but not in a loop.
+  // A live run's stream can close without a terminal event (slow-subscriber overflow, proxies):
+  // reconnect, but not in a tight loop.
   describe('stream closes cleanly while the run is still live', () => {
     beforeEach(() => jest.useFakeTimers());
     afterEach(() => jest.useRealTimers());
@@ -345,25 +345,49 @@ describe('Bot Chat turns', () => {
       expect(events.map((e) => e.event)).toEqual(['run.completed']);
     });
 
-    it('waits longer after each clean close in a row (2 s, then 4 s)', async () => {
+    it('waits longer after each clean close in a row, capped at 10 s (2, 4, 8, 10, 10 s)', async () => {
+      const waits = [2_000, 4_000, 8_000, 10_000, 10_000];
+      for (const _ of waits) {
+        jest.mocked(streamingFetch).mockResolvedValueOnce(sseResponse() as never);
+        fetchMock.mockResolvedValueOnce(status({ run_id: 'run-1', status: 'queued' }));
+      }
+      jest.mocked(streamingFetch).mockResolvedValueOnce(sseResponse(completed) as never);
+
+      const done = followBotRun('default', 'run-1', () => {}, new AbortController().signal);
+      for (const [i, wait] of waits.entries()) {
+        await jest.advanceTimersByTimeAsync(wait - 1);
+        expect(streamingFetch).toHaveBeenCalledTimes(i + 1);
+        await jest.advanceTimersByTimeAsync(1);
+        expect(streamingFetch).toHaveBeenCalledTimes(i + 2);
+      }
+      await done;
+    });
+
+    it('removes its abort listener from the caller signal after a wait that ran out', async () => {
       jest
         .mocked(streamingFetch)
         .mockResolvedValueOnce(sseResponse() as never)
-        .mockResolvedValueOnce(sseResponse() as never)
         .mockResolvedValueOnce(sseResponse(completed) as never);
-      fetchMock
-        .mockResolvedValueOnce(status({ run_id: 'run-1', status: 'queued' }))
-        .mockResolvedValueOnce(status({ run_id: 'run-1', status: 'queued' }));
+      fetchMock.mockResolvedValueOnce(status({ run_id: 'run-1', status: 'queued' }));
+      const controller = new AbortController();
+      const live = new Set<unknown>();
+      const add = controller.signal.addEventListener.bind(controller.signal);
+      const remove = controller.signal.removeEventListener.bind(controller.signal);
+      jest.spyOn(controller.signal, 'addEventListener').mockImplementation((type, listener, options) => {
+        if (type === 'abort') live.add(listener);
+        add(type, listener, options);
+      });
+      jest.spyOn(controller.signal, 'removeEventListener').mockImplementation((type, listener, options) => {
+        if (type === 'abort') live.delete(listener);
+        remove(type, listener, options);
+      });
 
-      const done = followBotRun('default', 'run-1', () => {}, new AbortController().signal);
+      const done = followBotRun('default', 'run-1', () => {}, controller.signal);
       await jest.advanceTimersByTimeAsync(2_000);
-      expect(streamingFetch).toHaveBeenCalledTimes(2);
-      await jest.advanceTimersByTimeAsync(3_999);
-      expect(streamingFetch).toHaveBeenCalledTimes(2);
-      await jest.advanceTimersByTimeAsync(1);
       await done;
 
-      expect(streamingFetch).toHaveBeenCalledTimes(3);
+      expect(streamingFetch).toHaveBeenCalledTimes(2);
+      expect(live.size).toBe(0);
     });
 
     it('starts the wait over once a stream delivers events', async () => {

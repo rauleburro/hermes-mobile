@@ -241,8 +241,9 @@ export async function followBotRun(
   let lastSeq: string | undefined;
   let done = false;
   let failures = 0;
-  // Streams in a row that closed cleanly on a live run (Hermes does so with the run still `queued`
-  // when it hands admission to the next gateway owner). Never gives up, only slows down.
+  // Streams in a row that closed cleanly on a live run: a live run's stream can close without a
+  // terminal event (slow-subscriber overflow, proxies). Reconnect, but not in a tight loop: never
+  // gives up, only slows down.
   let cleanCloses = 0;
 
   while (!done && !signal.aborted) {
