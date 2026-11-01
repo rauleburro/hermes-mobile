@@ -37,46 +37,65 @@ async function requireConfig(): Promise<BffConfig> {
  */
 export const REQUEST_TIMEOUT_MS = 15_000;
 
+type Deadline = {
+  ms: number;
+  /** The caller's signal: aborting it aborts the work at once. */
+  signal?: AbortSignal | null;
+  onTimeout: () => Error;
+  onAbort: () => Error;
+};
+
 /**
- * Runs `work` with an AbortSignal that aborts after `ms`, and rejects with `onTimeout()` then even
- * if `work` ignores the signal. The timer is cleared as soon as `work` settles.
+ * Runs `work` with an AbortSignal that aborts after `ms` or when the caller's signal aborts, and
+ * rejects then even if `work` ignores the signal. The caller's signal is linked by hand (works on
+ * any engine, no `AbortSignal.any` needed); its listener and the timer go once `work` settles.
  */
-function withTimeout<T>(ms: number, work: (signal: AbortSignal) => Promise<T>, onTimeout: () => Error): Promise<T> {
+function withDeadline<T>({ ms, signal: outer, onTimeout, onAbort }: Deadline, work: (signal: AbortSignal) => Promise<T>) {
   const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      controller.abort();
-      reject(onTimeout());
-    }, ms);
+  let fail: (error: Error) => void = () => {};
+  const stopped = new Promise<never>((_, reject) => (fail = reject));
+  const stop = (error: Error) => {
+    controller.abort();
+    fail(error);
+  };
+  const callerAborted = () => stop(onAbort());
+  if (outer?.aborted) callerAborted();
+  else outer?.addEventListener('abort', callerAborted);
+  const timer = setTimeout(() => stop(onTimeout()), ms);
+  return Promise.race([work(controller.signal), stopped]).finally(() => {
+    clearTimeout(timer);
+    outer?.removeEventListener('abort', callerAborted);
   });
-  return Promise.race([work(controller.signal), timeout]).finally(() => clearTimeout(timer));
 }
 
 /**
  * A timeout throws a BffError with code `timeout` and no HTTP status: like a network failure,
- * it reads as "Offline" next to saved data and is retried as transient.
+ * it reads as "Offline" next to saved data and is retried as transient. `init.signal` still
+ * aborts the request (BffError code `aborted`).
  */
 async function request<T>(path: string, init: RequestInit = {}, config?: BffConfig): Promise<T> {
   const { url, token } = config ?? (await requireConfig());
+  const { signal: callerSignal, ...rest } = init;
   const method = init.method ?? 'GET';
-  return withTimeout(
-    REQUEST_TIMEOUT_MS,
-    async (signal) => {
-      const res = await fetch(`${url}${path}`, {
-        ...init,
-        signal,
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...init.headers },
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
-        const code = typeof body?.error === 'string' ? body.error : undefined;
-        throw new BffError(`${method} ${path} failed (${res.status})`, res.status, code);
-      }
-      return (await res.json()) as T;
-    },
-    () => new BffError(`${method} ${path} timed out`, undefined, 'timeout'),
-  );
+  const deadline: Deadline = {
+    ms: REQUEST_TIMEOUT_MS,
+    signal: callerSignal,
+    onTimeout: () => new BffError(`${method} ${path} timed out`, undefined, 'timeout'),
+    onAbort: () => new BffError(`${method} ${path} aborted`, undefined, 'aborted'),
+  };
+  return withDeadline(deadline, async (signal) => {
+    const res = await fetch(`${url}${path}`, {
+      ...rest,
+      signal,
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...init.headers },
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+      const code = typeof body?.error === 'string' ? body.error : undefined;
+      throw new BffError(`${method} ${path} failed (${res.status})`, res.status, code);
+    }
+    return (await res.json()) as T;
+  });
 }
 
 export const checkHealth = (config: BffConfig) => request<HealthResponse>('/health', {}, config);
@@ -219,7 +238,7 @@ export async function followBotRun(
       }
       if (!done) {
         // Stream closed without a terminal event: the run may already be over (buffer expired).
-        const run = await request<{ status: string; output?: string }>(botRun(botId, runId));
+        const run = await request<{ status: string; output?: string }>(botRun(botId, runId), { signal });
         if (['completed', 'failed', 'cancelled', 'interrupted'].includes(run.status)) {
           onEvent({ event: `run.${run.status}`, run_id: runId, timestamp: Date.now() / 1000, output: run.output } as RunEvent);
           done = true;

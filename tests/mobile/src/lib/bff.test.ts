@@ -370,6 +370,60 @@ describe('Bot Chat turns', () => {
       await expect(done).resolves.toBeUndefined();
       expect(streamingFetch).toHaveBeenCalledTimes(1);
     });
+
+    /** Counts the abort listeners currently registered on `signal`. */
+    function trackAbortListeners(signal: AbortSignal) {
+      const live = new Set<unknown>();
+      const add = signal.addEventListener.bind(signal);
+      const remove = signal.removeEventListener.bind(signal);
+      jest.spyOn(signal, 'addEventListener').mockImplementation((type, listener, options) => {
+        if (type === 'abort') live.add(listener);
+        add(type, listener, options);
+      });
+      jest.spyOn(signal, 'removeEventListener').mockImplementation((type, listener, options) => {
+        if (type === 'abort') live.delete(listener);
+        remove(type, listener, options);
+      });
+      return live;
+    }
+
+    it("aborts the run-status check at once when the caller aborts, without waiting for the request timeout", async () => {
+      jest.mocked(streamingFetch).mockResolvedValueOnce(sseResponse() as never);
+      fetchMock.mockImplementation(
+        (_url: string, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+          }),
+      );
+      const controller = new AbortController();
+      let settled = false;
+      const done = followBotRun('default', 'run-1', () => {}, controller.signal).finally(() => (settled = true));
+      await jest.advanceTimersByTimeAsync(1);
+      expect(fetchMock).toHaveBeenCalledTimes(1); // GET /bots/default/runs/run-1, in flight
+
+      controller.abort();
+      await jest.advanceTimersByTimeAsync(1);
+
+      expect((fetchMock.mock.calls[0][1] as RequestInit).signal?.aborted).toBe(true);
+      expect(settled).toBe(true);
+      await expect(done).resolves.toBeUndefined();
+    });
+
+    it('removes its abort listeners from the caller signal once the run ends (no leak, no late abort)', async () => {
+      // The stream closes without a terminal event, so both the stream and the run-status check listen.
+      jest.mocked(streamingFetch).mockResolvedValueOnce(sseResponse() as never);
+      respond(200, { run_id: 'run-1', status: 'completed', output: 'done' });
+      const controller = new AbortController();
+      const live = trackAbortListeners(controller.signal);
+
+      await followBotRun('default', 'run-1', () => {}, controller.signal);
+
+      expect(controller.signal.addEventListener).toHaveBeenCalled();
+      expect(live.size).toBe(0);
+      controller.abort();
+      expect((jest.mocked(streamingFetch).mock.calls[0][1] as RequestInit).signal?.aborted).toBe(false);
+      expect((fetchMock.mock.calls[0][1] as RequestInit).signal?.aborted).toBe(false);
+    });
   });
 });
 
