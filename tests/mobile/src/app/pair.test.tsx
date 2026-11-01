@@ -2,7 +2,7 @@ import { act, render, screen, userEvent, waitFor } from '@testing-library/react-
 import { Linking } from 'react-native';
 import { router } from 'expo-router';
 import PairScreen from '@mobile/app/pair';
-import { checkHealth } from '@mobile/lib/bff';
+import { BffError, checkHealth } from '@mobile/lib/bff';
 import { loadConfig, saveConfig } from '@mobile/lib/config';
 import { ensureLocalNetworkAccess, LOCAL_NETWORK_HINT, localNetworkHint } from '@mobile/lib/localNetwork';
 
@@ -14,7 +14,7 @@ jest.mock('expo-router', () => ({
   useTheme: () => ({ colors: { text: 'black', border: 'gray', notification: 'red' } }),
 }));
 // Network and secure storage are the screen's only side effects.
-jest.mock('@mobile/lib/bff', () => ({ checkHealth: jest.fn() }));
+jest.mock('@mobile/lib/bff', () => ({ BffError: jest.requireActual('@mobile/lib/bff').BffError, checkHealth: jest.fn() }));
 jest.mock('@mobile/lib/config', () => ({ loadConfig: jest.fn().mockResolvedValue(null), saveConfig: jest.fn() }));
 // Android 17's Nearby devices permission (covered by the localNetwork tests): only its answers matter here.
 jest.mock('@mobile/lib/localNetwork', () => ({
@@ -325,6 +325,21 @@ describe('PairScreen on the local network (Android 17 Nearby devices)', () => {
 
     await user.press(screen.getByRole('button', { name: 'Open settings' }));
     expect(openSettings).toHaveBeenCalled();
+  });
+
+  it('keeps the denied Nearby devices hint when the health check then times out', async () => {
+    const { localNetworkHint: realHint } = jest.requireActual<typeof import('@mobile/lib/localNetwork')>('@mobile/lib/localNetwork');
+    mockedHint.mockImplementation((url, error) => realHint(url, error, { OS: 'android', Version: 37 }));
+    mockedEnsureAccess.mockResolvedValue('denied');
+    mockedCheckHealth.mockRejectedValue(new BffError('GET /health timed out', undefined, 'timeout'));
+    await render(<PairScreen />);
+
+    const user = await fillForm('http://192.168.1.10:8787', 'secret');
+    await user.press(screen.getByRole('button', { name: 'Pair' }));
+
+    expect(await screen.findByText('Could not reach the BFF: GET /health timed out')).toBeOnTheScreen();
+    expect(screen.getByText(LOCAL_NETWORK_HINT)).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: 'Open settings' })).toBeOnTheScreen();
   });
 
   it('still pairs when asking for the permission itself fails', async () => {

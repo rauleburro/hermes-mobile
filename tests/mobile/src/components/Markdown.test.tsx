@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react-native';
 import { Linking, Platform, StyleSheet } from 'react-native';
-import { hasOpenableLinks, Markdown } from '@mobile/components/Markdown';
+import { Markdown } from '@mobile/components/Markdown';
+import { hasOpenableLinks as hasLinks, parseMarkdown } from '@mobile/lib/markdown';
 
 // The component reads its colors from the navigation theme. Each test can switch it.
 const LIGHT = { dark: false, colors: { text: 'rgb(28, 28, 30)', border: 'rgb(216, 216, 216)', primary: 'rgb(0, 122, 255)' } };
@@ -180,6 +181,14 @@ describe('Markdown', () => {
     expect(screen.getByText(/\| a \| b \|/)).toBeOnTheScreen();
   });
 
+  it('renders reference definitions as nothing, and resolves the links that use them', async () => {
+    await render(<Markdown>{'See [the docs][d].\n\n[d]: https://example.com/docs "Docs"'}</Markdown>);
+
+    expect(screen.getByRole('link', { name: 'the docs' })).toBeOnTheScreen();
+    expect(screen.queryByText(/example\.com/)).toBeNull();
+    expect(screen.queryByText(/\[d\]/)).toBeNull();
+  });
+
   describe('hostile input', () => {
     it('falls back to plain text when the lexer overflows the stack (5000 nested quotes)', async () => {
       const text = '>'.repeat(5000) + ' x';
@@ -235,6 +244,8 @@ describe('Markdown', () => {
 });
 
 describe('hasOpenableLinks', () => {
+  const hasOpenableLinks = (text: string) => hasLinks(parseMarkdown(text));
+
   it('finds http(s) and mailto links, also nested in lists and quotes', () => {
     expect(hasOpenableLinks('See [docs](https://example.com)')).toBe(true);
     expect(hasOpenableLinks('- item\n  - [mail](mailto:a@example.com)')).toBe(true);
@@ -245,6 +256,18 @@ describe('hasOpenableLinks', () => {
     expect(hasOpenableLinks('plain **text**')).toBe(false);
     expect(hasOpenableLinks('[x](javascript:alert(1))')).toBe(false);
     expect(hasOpenableLinks('`[code](https://example.com)`')).toBe(false);
+  });
+
+  it('matches the nesting cap: a link the renderer shows as plain text does not count', async () => {
+    const quoted = (levels: number) => `${'> '.repeat(levels)}[deep](https://example.com)`;
+
+    expect(hasOpenableLinks(quoted(8))).toBe(true);
+    await render(<Markdown>{quoted(8)}</Markdown>);
+    expect(screen.getByRole('link', { name: 'deep' })).toBeOnTheScreen();
+
+    expect(hasOpenableLinks(quoted(9))).toBe(false);
+    await render(<Markdown>{quoted(9)}</Markdown>);
+    expect(screen.queryByRole('link')).toBeNull();
   });
 
   it('is false for text that is too large to parse (it renders as plain text)', () => {

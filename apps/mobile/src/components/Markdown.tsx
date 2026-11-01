@@ -1,7 +1,8 @@
 import { useTheme } from 'expo-router';
-import { Lexer, type Token, type Tokens } from 'marked';
+import type { Token, Tokens } from 'marked';
 import { type ReactNode, useMemo } from 'react';
 import { type ColorValue, Linking, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { MAX_DEPTH, OPENABLE, parseMarkdown } from '@/lib/markdown';
 
 // Renders an assistant reply written in Markdown with plain React Native components.
 // `marked` only tokenizes; rendering is ours, so raw HTML is never interpreted: HTML
@@ -10,76 +11,16 @@ import { type ColorValue, Linking, Platform, ScrollView, StyleSheet, Text, View 
 
 const MONO = Platform.select({ ios: 'Menlo', default: 'monospace' });
 const HEADING_SIZES = [26, 22, 19, 17, 16, 15];
-// Only these open in the system browser. Anything else (app deep links, javascript:)
-// stays plain text so a reply cannot drive the app.
-const OPENABLE = /^(https?:|mailto:)/i;
-
-// Guards against hostile or degenerate replies. A reply that trips one is shown as
-// plain text instead of crashing the chat or freezing the JS thread.
-// - Size: real replies are a few KB; 30 KB is ~10 screens of text. Beyond that we skip
-//   parsing entirely (linear cost guard, and it bounds deep-list inputs too).
-const MAX_LENGTH = 30_000;
-// - Emphasis: marked's emphasis matching is quadratic in the delimiters of one
-//   paragraph (8000 `_a ` takes minutes). 200 `*`/`_`/`~` in one paragraph is far more
-//   than any real prose and lexes in a few ms; denser paragraphs stay plain text.
-const MAX_INLINE_DELIMITERS = 200;
-// - Nesting: blockquotes and lists deeper than this render their source as plain text.
-const MAX_DEPTH = 8;
 
 type Colors = { text: ColorValue; border: ColorValue; primary: ColorValue };
 
-class GuardedLexer extends Lexer {
-  override inlineTokens(src: string, tokens: Token[] = []): Token[] {
-    if (countDelimiters(src) > MAX_INLINE_DELIMITERS) {
-      tokens.push({ type: 'text', raw: src, text: src } as Tokens.Text);
-      return tokens;
-    }
-    return super.inlineTokens(src, tokens);
-  }
-}
-
-function countDelimiters(src: string): number {
-  let n = 0;
-  for (let i = 0; i < src.length; i++) {
-    const c = src.charCodeAt(i);
-    if (c === 42 || c === 95 || c === 126) n++; // * _ ~
-  }
-  return n;
-}
-
-/** Tokens for `text`, or null when it must be shown as plain text. */
-function parse(text: string): Token[] | null {
-  if (text.length > MAX_LENGTH) return null;
-  try {
-    return new GuardedLexer().lex(text);
-  } catch {
-    // e.g. RangeError (stack overflow) on thousands of nested blockquotes.
-    return null;
-  }
-}
-
 /**
- * Whether `text` renders at least one link that can be opened (http/https/mailto).
- * Containers use it to avoid grouping a reply into one accessibility element, which
- * would hide its links from screen readers.
+ * Renders `children` as Markdown. Pass `tokens` when the caller already parsed it with
+ * {@link parseMarkdown} (`null` renders it as plain text), so the reply is lexed only once.
  */
-export function hasOpenableLinks(text: string): boolean {
-  const tokens = parse(text);
-  return tokens ? tokens.some(containsOpenableLink) : false;
-}
-
-function containsOpenableLink(token: Token): boolean {
-  if (token.type === 'link' && OPENABLE.test((token as Tokens.Link).href)) return true;
-  const children: Token[] = [
-    ...(('tokens' in token && Array.isArray(token.tokens) ? token.tokens : []) as Token[]),
-    ...(token.type === 'list' ? (token as Tokens.List).items : []),
-  ];
-  return children.some(containsOpenableLink);
-}
-
-export function Markdown({ children }: { children: string }) {
+export function Markdown({ children, tokens: parsed }: { children: string; tokens?: Token[] | null }) {
   const { colors } = useTheme();
-  const tokens = useMemo(() => parse(children), [children]);
+  const tokens = useMemo(() => (parsed !== undefined ? parsed : parseMarkdown(children)), [parsed, children]);
   return (
     <View style={styles.root}>
       {tokens ? (
@@ -109,6 +50,7 @@ function renderBlock(token: Token, colors: Colors, key: string, depth: number): 
   const text = { color: colors.text };
   switch (token.type) {
     case 'space':
+    case 'def': // reference definition: links that use it already carry its URL
     case 'checkbox': // shown as the list item's marker instead
       return null;
     case 'heading': {

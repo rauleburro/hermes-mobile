@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react-native';
+import { Lexer } from 'marked';
 import { MessageBubble } from '@mobile/components/MessageBubble';
 
 jest.mock('expo-router', () => ({
@@ -52,6 +53,30 @@ describe('MessageBubble', () => {
     await render(<MessageBubble role="assistant" text="[x](javascript:alert(1))" />);
 
     expect(screen.queryByRole('link')).toBeNull();
-    expect(screen.getByLabelText('Bot: [x](javascript:alert(1))')).toHaveProp('accessible', true);
+    expect(screen.getByLabelText('Bot: x')).toHaveProp('accessible', true);
+  });
+
+  it('reads a grouped reply as plain text, without Markdown syntax', async () => {
+    await render(<MessageBubble role="assistant" text={'# Plan\n\n- **first** step\n- run `make`'} />);
+
+    expect(screen.getByLabelText('Bot: Plan\nfirst step\nrun make')).toHaveProp('accessible', true);
+  });
+
+  it('keeps the label of user lines and streaming replies literal', async () => {
+    await render(<MessageBubble role="user" text="**hi**" />);
+    expect(screen.getByLabelText('You: **hi**')).toBeOnTheScreen();
+
+    await render(<MessageBubble role="assistant" text="Partial **bold**" streaming />);
+    expect(screen.getByLabelText('Bot: Partial **bold**')).toBeOnTheScreen();
+  });
+
+  it('lexes a reply once for its links, label and rendering', async () => {
+    const lex = jest.spyOn(Lexer.prototype, 'lex');
+    try {
+      await render(<MessageBubble role="assistant" text="Some **bold** text" />);
+      expect(lex).toHaveBeenCalledTimes(1);
+    } finally {
+      lex.mockRestore();
+    }
   });
 });
