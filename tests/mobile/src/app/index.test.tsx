@@ -280,6 +280,40 @@ describe('HomeScreen with the local cache', () => {
     expect(readRoster(BFF)?.previews).toEqual({ default: 'saved pong' });
   });
 
+  it('keeps a fresh roster on screen with the offline hint and Retry when a later refresh times out', async () => {
+    roster([bot({ id: 'default', name: 'Hermes' })]);
+    await render(<HomeScreen />);
+    expect(await screen.findByText('Hermes')).toBeOnTheScreen();
+    jest.mocked(listBots).mockRejectedValueOnce(new BffError('GET /bots timed out', undefined, 'timeout'));
+
+    await act(async () => {
+      fireEvent(screen.getByTestId('roster'), 'refresh');
+    });
+
+    expect(await screen.findByText('Offline · showing saved data')).toBeOnTheScreen();
+    expect(screen.queryByText('GET /bots timed out')).toBeNull();
+    expect(screen.getByText('Hermes')).toBeOnTheScreen();
+
+    await userEvent.setup().press(screen.getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => expect(screen.queryByText(/showing saved data/)).toBeNull());
+    expect(listBots).toHaveBeenCalledTimes(3);
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
+  it('offers Retry next to the saved roster when the BFF cannot be reached', async () => {
+    cached([bot({ id: 'default', name: 'Hermes' })]);
+    jest.mocked(listBots).mockRejectedValueOnce(new TypeError('Network request failed'));
+    roster([bot({ id: 'default', name: 'Hermes' })]);
+    await render(<HomeScreen />);
+    expect(await screen.findByText('Offline · showing saved data')).toBeOnTheScreen();
+
+    await userEvent.setup().press(screen.getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => expect(screen.queryByText(/showing saved data/)).toBeNull());
+    expect(listBots).toHaveBeenCalledTimes(2);
+  });
+
   it("shows the BFF's error, not 'Offline', next to the saved roster when the BFF answered with one", async () => {
     cached([bot({ id: 'default', name: 'Hermes' })]);
     jest.mocked(listBots).mockRejectedValue(new BffError('GET /bots failed (401)', 401, 'unauthorized'));
