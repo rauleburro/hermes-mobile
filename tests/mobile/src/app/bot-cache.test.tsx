@@ -72,6 +72,21 @@ describe('BotChatScreen with the local cache', () => {
     expect(screen.queryByText('Loading…')).toBeNull();
   });
 
+  it('renders saved assistant replies as Markdown and keeps saved user lines literal, like the live chat', async () => {
+    bindCache(BFF);
+    writeChat(BFF, 'default', 'chat-default', [
+      { id: 1, role: 'user', content: 'Please use **stars**' },
+      { id: 2, role: 'assistant', content: 'Sure, **bold** reply' },
+    ]);
+    jest.mocked(getBotChat).mockImplementation(never);
+    await render(<BotChatScreen />);
+
+    expect(screen.getByText('Updating…')).toBeOnTheScreen();
+    expect(screen.getByText('Please use **stars**')).toBeOnTheScreen();
+    expect(screen.getByText('bold')).toBeOnTheScreen();
+    expect(screen.queryByText(/\*\*bold\*\*/)).toBeNull();
+  });
+
   it('never paints a saved chat that belongs to another BFF than the paired one', async () => {
     savedChat(OTHER);
     jest.mocked(getBotChat).mockImplementation(never);
