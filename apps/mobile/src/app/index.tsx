@@ -50,9 +50,10 @@ export default function HomeScreen() {
           }),
         );
     } catch (e) {
-      setError((e as Error).message);
+      if (current === generation.current) setError((e as Error).message);
     } finally {
-      setLoading(false);
+      // Only the latest refresh owns the spinner.
+      if (current === generation.current) setLoading(false);
     }
   }, []);
 

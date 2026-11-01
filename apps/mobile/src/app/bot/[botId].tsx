@@ -15,7 +15,29 @@ import {
 import { MessageBubble, type MessageRole } from '@/components/MessageBubble';
 import { BffError, followBotRun, getBotChat, getBotMessages, sendBotMessage, stopBotRun } from '@/lib/bff';
 
-type Line = { key: string; role: MessageRole | 'status'; text: string };
+/** `id` is the Hermes message id (history rows only); ids grow monotonically within a session. */
+type Line = { key: string; role: MessageRole | 'status'; text: string; id?: number };
+
+/** Where the history stood before a turn: the newest message id, or the row count when ids are missing. */
+type Baseline = { maxId: number | null; count: number };
+
+const numericId = (id: SessionMessage['id']) => {
+  const n = typeof id === 'number' ? id : Number(id);
+  return id !== undefined && id !== null && id !== '' && Number.isFinite(n) ? n : undefined;
+};
+
+function baselineOf(lines: Line[]): Baseline {
+  const ids = lines.map((l) => l.id);
+  const allIds = ids.every((id) => id !== undefined);
+  return { maxId: allIds && ids.length ? Math.max(...(ids as number[])) : allIds ? 0 : null, count: lines.length };
+}
+
+/** History rows that belong to turns after the baseline. The history is a sliding window, so ids win over counts. */
+function rowsAfter(fresh: Line[], baseline: Baseline): Line[] {
+  const { maxId } = baseline;
+  if (maxId !== null && fresh.every((l) => l.id !== undefined)) return fresh.filter((l) => l.id! > maxId);
+  return fresh.slice(baseline.count);
+}
 
 type ChatState =
   | { kind: 'loading' }
@@ -33,7 +55,7 @@ type Notice =
 function toLines(messages: SessionMessage[]): Line[] {
   return messages
     .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content)
-    .map((m, i) => ({ key: `h-${m.id ?? i}`, role: m.role as MessageRole, text: m.content ?? '' }));
+    .map((m, i) => ({ key: `h-${m.id ?? i}`, role: m.role as MessageRole, text: m.content ?? '', id: numericId(m.id) }));
 }
 
 /** Seconds since `since` while it is set, ticking once a second. */
@@ -58,8 +80,8 @@ export default function BotChatScreen() {
   const [runId, setRunId] = useState<string | null>(null);
   const [workingSince, setWorkingSince] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  // History rows that existed before the current turn: only rows after them can be that turn.
-  const baselineRef = useRef(0);
+  // Where the history stood before the current turn: only rows after it can be that turn.
+  const baselineRef = useRef<Baseline>({ maxId: null, count: 0 });
   const elapsed = useElapsed(workingSince);
 
   useEffect(() => {
@@ -105,7 +127,7 @@ export default function BotChatScreen() {
    */
   async function reconcile(sessionId: string) {
     const fresh = toLines(await getBotMessages(botId, sessionId));
-    const added = fresh.slice(baselineRef.current);
+    const added = rowsAfter(fresh, baselineRef.current);
     const newCount = { user: added.filter((l) => l.role === 'user').length, assistant: added.filter((l) => l.role === 'assistant').length };
     setHistory(fresh);
     setPending((p) =>
@@ -139,6 +161,8 @@ export default function BotChatScreen() {
     } finally {
       setRunId(null);
       setWorkingSince(null);
+      // "Stop requested" / "Stop failed" only make sense while the turn runs.
+      setNotice((n) => (n?.kind === 'info' ? null : n));
     }
     if (!controller.signal.aborted && id) await reconcile(sessionId).catch(() => {});
   }
@@ -147,9 +171,15 @@ export default function BotChatScreen() {
     const text = draft.trim();
     if (!text || workingSince !== null || state.kind !== 'ready') return;
     const clientMessageId = Crypto.randomUUID();
-    baselineRef.current = history.length;
+    baselineRef.current = baselineOf(history);
+    // A message that was never sent is given up when the user sends a different one;
+    // left pending it would be matched against the new turn's row.
+    const unsentKey = notice?.kind === 'not-sent' ? `u-${notice.clientMessageId}` : null;
     setDraft('');
-    setPending((p) => [...p.filter((l) => l.role !== 'status'), { key: `u-${clientMessageId}`, role: 'user', text }]);
+    setPending((p) => [
+      ...p.filter((l) => l.role !== 'status' && l.key !== unsentKey),
+      { key: `u-${clientMessageId}`, role: 'user', text },
+    ]);
     runTurn(state.sessionId, text, clientMessageId);
   }
 

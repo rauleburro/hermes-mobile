@@ -179,6 +179,30 @@ describe('HomeScreen (Bots roster)', () => {
     expect(screen.getByText('new preview')).toBeOnTheScreen();
   });
 
+  it('ignores the failure and the end of an earlier refresh that a newer one replaced', async () => {
+    let rejectOld: (e: Error) => void = () => {};
+    let resolveNew: (r: BotsResponse) => void = () => {};
+    jest
+      .mocked(listBots)
+      .mockImplementationOnce(() => new Promise((_, reject) => (rejectOld = reject)))
+      .mockImplementationOnce(() => new Promise((resolve) => (resolveNew = resolve)));
+    await render(<HomeScreen />);
+    await waitFor(() => expect(listBots).toHaveBeenCalledTimes(1));
+
+    // Not awaited: this refresh stays pending until resolveNew below.
+    void fireEvent(screen.getByTestId('roster'), 'refresh');
+    await waitFor(() => expect(listBots).toHaveBeenCalledTimes(2));
+    await act(async () => rejectOld(new Error('GET /bots failed (502)')));
+
+    expect(screen.queryByText('GET /bots failed (502)')).toBeNull();
+    expect(screen.getByTestId('roster')).toHaveProp('refreshing', true);
+
+    await act(async () => resolveNew({ botModeEnabled: true, bots: [bot({ name: 'Hermes' })] }));
+
+    expect(await screen.findByText('Hermes')).toBeOnTheScreen();
+    expect(screen.getByTestId('roster')).toHaveProp('refreshing', false);
+  });
+
   it('never offers to create a session', async () => {
     roster([bot({})]);
     await render(<HomeScreen />);

@@ -1,5 +1,6 @@
 import type { RunEvent } from '@hermes-mobile/api';
 import { render, screen, userEvent, waitFor } from '@testing-library/react-native';
+import { Alert } from 'react-native';
 import BotChatScreen from '@mobile/app/bot/[botId]';
 import { BffError, followBotRun, getBotChat, getBotMessages, sendBotMessage, stopBotRun } from '@mobile/lib/bff';
 
@@ -230,6 +231,69 @@ describe('BotChatScreen', () => {
     expect(screen.getAllByText('[e2e] ping')).toHaveLength(1);
   });
 
+  it('matches the new turn by message id when the history window slides (oldest rows dropped)', async () => {
+    jest.mocked(getBotMessages).mockResolvedValue([
+      { id: 1, role: 'user', content: 'q1' },
+      { id: 2, role: 'assistant', content: 'a1' },
+      { id: 3, role: 'user', content: 'q2' },
+      { id: 4, role: 'assistant', content: 'a2' },
+    ]);
+    const finish = controllableRun();
+    await render(<BotChatScreen />);
+    await send('q3');
+    await screen.findByText(/Working…/);
+    // Same row count as before the send: the window dropped the two oldest rows and added the new turn.
+    jest.mocked(getBotMessages).mockResolvedValue([
+      { id: 3, role: 'user', content: 'q2' },
+      { id: 4, role: 'assistant', content: 'a2' },
+      { id: 5, role: 'user', content: 'q3' },
+      { id: 6, role: 'assistant', content: 'a3' },
+    ]);
+
+    finish({ event: 'run.completed', run_id: 'run-1', timestamp: 1, output: 'a3' });
+
+    await waitFor(() => expect(screen.queryByText('q1')).toBeNull());
+    await waitFor(() => expect(screen.getAllByText('a3')).toHaveLength(1));
+    expect(screen.getAllByText('q3')).toHaveLength(1);
+  });
+
+  it('drops an unsent message when a different one is sent, so the new turn is not shown twice', async () => {
+    jest.mocked(sendBotMessage).mockRejectedValueOnce(new Error('network down'));
+    const finish = controllableRun();
+    await render(<BotChatScreen />);
+    await send('message A');
+    await screen.findByText(/Message not sent/);
+
+    await send('message B');
+    await screen.findByText(/Working…/);
+    jest.mocked(getBotMessages).mockResolvedValue([
+      { role: 'user', content: 'earlier question' },
+      { role: 'assistant', content: 'earlier answer' },
+      { role: 'user', content: 'message B' },
+      { role: 'assistant', content: 'reply B' },
+    ]);
+    finish({ event: 'run.completed', run_id: 'run-1', timestamp: 1, output: 'reply B' });
+
+    await waitFor(() => expect(getBotMessages).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getAllByText('reply B')).toHaveLength(1));
+    expect(screen.getAllByText('message B')).toHaveLength(1);
+    expect(screen.queryByText('message A')).toBeNull();
+    expect(screen.queryByText(/Message not sent/)).toBeNull();
+  });
+
+  it('clears "Stop requested" once the turn ends', async () => {
+    const finish = controllableRun();
+    await render(<BotChatScreen />);
+    await send('[e2e] ping');
+    await userEvent.setup().press(await screen.findByRole('button', { name: 'Stop' }));
+    await screen.findByText('Stop requested');
+
+    finish({ event: 'run.completed', run_id: 'run-1', timestamp: 1, output: 'done anyway' });
+
+    expect(await screen.findByText('done anyway')).toBeOnTheScreen();
+    expect(screen.queryByText('Stop requested')).toBeNull();
+  });
+
   it('aborts the stream on unmount without reloading or reporting a failure', async () => {
     let signal: AbortSignal | undefined;
     jest.mocked(followBotRun).mockImplementation((_b, _r, _e, s) => {
@@ -248,6 +312,7 @@ describe('BotChatScreen', () => {
   });
 
   it('renders nothing actionable for an approval request (Bot Chat approvals are not reachable)', async () => {
+    const alert = jest.spyOn(Alert, 'alert');
     let emit: (e: RunEvent) => void = () => {};
     jest.mocked(followBotRun).mockImplementation((_b, _r, onEvent) => {
       emit = onEvent;
@@ -262,6 +327,8 @@ describe('BotChatScreen', () => {
     await screen.findByText(/Working…/);
     expect(screen.queryByText(/rm -rf/)).toBeNull();
     expect(screen.queryByRole('button', { name: /Allow|Deny/ })).toBeNull();
+    expect(alert).not.toHaveBeenCalled();
+    alert.mockRestore();
   });
 
   it('shows a generic notice when the Bot Chat cannot be loaded', async () => {
