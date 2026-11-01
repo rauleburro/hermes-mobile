@@ -13,7 +13,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { followRun, getMessages, resolveApproval, sendMessage, stopRun } from '@/lib/bff';
+import { Markdown } from '@/components/Markdown';
+import { followRun,getMessages, resolveApproval, sendMessage, stopRun } from '@/lib/bff';
 
 type Bubble = { key: string; role: 'user' | 'assistant' | 'status'; text: string };
 
@@ -145,9 +146,13 @@ export default function ChatScreen() {
                   ? [styles.user, { backgroundColor: colors.primary }]
                   : [styles.assistant, { backgroundColor: colors.card, borderColor: colors.border }],
               ]}>
-              <Text selectable style={{ color: item.role === 'user' ? '#fff' : colors.text, fontSize: 16 }}>
-                {item.text}
-              </Text>
+              {item.role === 'assistant' ? (
+                <Markdown>{item.text}</Markdown>
+              ) : (
+                <Text selectable style={{ color: '#fff', fontSize: 16 }}>
+                  {item.text}
+                </Text>
+              )}
             </View>
           )
         }
