@@ -132,9 +132,27 @@ export function parsePushRefs(input) {
 }
 
 /**
+ * True if the commit (or the commit a tag object points at) is already
+ * reachable from a remote-tracking ref: it was validated, or deliberately
+ * accepted (e.g. a squash merge on main), when it got there.
+ * @param {string} cwd
+ * @param {string} sha
+ */
+function alreadyOnRemote(cwd, sha) {
+  try {
+    return git(cwd, ["rev-list", "--max-count=1", `${sha}^{commit}`, "--not", "--remotes"]).trim() === "";
+  } catch {
+    return false; // unknown object: let check() report it
+  }
+}
+
+/**
  * Receipt check for every ref being pushed (the local sha, not HEAD).
- * A zero LOCAL sha is a deletion and is skipped; a zero remote sha is a new
- * branch and is checked like any other.
+ * A zero LOCAL sha is a deletion and is skipped. A sha already reachable from
+ * a remote-tracking ref is skipped too: that covers tags on main and new
+ * branches cut from an already-pushed commit. Tags are not skipped by name: a
+ * tag on a new, unvalidated commit would push untested code. A new branch at
+ * a new commit (zero remote sha) is checked like any other.
  * @param {string} cwd
  * @param {string} input git's pre-push stdin
  * @returns {{ok: boolean, messages: string[]}}
@@ -150,6 +168,7 @@ export function checkPush(cwd, input) {
   const messages = [];
   for (const { localRef, localSha } of refs) {
     if (ZERO_SHA.test(localSha)) continue;
+    if (alreadyOnRemote(cwd, localSha)) continue;
     const result = check(cwd, localSha);
     if (!result.ok) messages.push(`${localRef}: ${result.message}`);
   }
