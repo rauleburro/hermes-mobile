@@ -1,13 +1,29 @@
-import type { SessionSummary } from '@hermes-mobile/api';
+import type { BotSummary, BotsResponse } from '@hermes-mobile/api';
 import { router, Stack, useFocusEffect, useTheme } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, Button, FlatList, Pressable, RefreshControl, StyleSheet, Text } from 'react-native';
-import { createSession, listSessions } from '@/lib/bff';
+import { Button, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { BotAvatar } from '@/components/BotAvatar';
+import { BotModeDisabled } from '@/components/BotModeDisabled';
+import { BffError, getBotChat, getBotMessages, listBots } from '@/lib/bff';
+import { lastMessagePreview } from '@/lib/bots';
 import { loadConfig } from '@/lib/config';
 
-export default function SessionsScreen() {
+const NO_BOT_CHAT = 'No Bot Chat yet';
+
+/** Last line of a Bot's Bot Chat, or why there isn't one. Undefined when it couldn't be read. */
+async function loadPreview(botId: string): Promise<string | undefined> {
+  try {
+    const { sessionId } = await getBotChat(botId);
+    return lastMessagePreview(await getBotMessages(botId, sessionId)) ?? 'No messages yet';
+  } catch (e) {
+    return e instanceof BffError && e.code === 'bot_chat_missing' ? NO_BOT_CHAT : undefined;
+  }
+}
+
+export default function HomeScreen() {
   const { colors } = useTheme();
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [roster, setRoster] = useState<BotsResponse | null>(null);
+  const [previews, setPreviews] = useState<Record<string, string | undefined>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -18,8 +34,13 @@ export default function SessionsScreen() {
     }
     setLoading(true);
     try {
-      setSessions(await listSessions());
+      const next = await listBots();
+      setRoster(next);
       setError(null);
+      // Previews fill in after the roster renders; one failing Bot never blanks the list.
+      next.bots
+        .filter((b) => b.reachable)
+        .forEach((b) => loadPreview(b.id).then((p) => setPreviews((prev) => ({ ...prev, [b.id]: p }))));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -33,49 +54,83 @@ export default function SessionsScreen() {
     }, [refresh]),
   );
 
-  async function newChat() {
-    try {
-      const id = await createSession();
-      router.push({ pathname: '/chat/[sessionId]', params: { sessionId: id } });
-    } catch (e) {
-      Alert.alert('Could not create a chat', (e as Error).message);
-    }
+  const header = (
+    <Stack.Screen options={{ headerLeft: () => <Button title="Pair" onPress={() => router.push('/pair')} /> }} />
+  );
+
+  if (roster && !roster.botModeEnabled) {
+    return (
+      <>
+        {header}
+        <BotModeDisabled onRetry={refresh} />
+      </>
+    );
   }
+
+  const renderBot = ({ item }: { item: BotSummary }) => {
+    const subtitle = item.reachable ? previews[item.id] : 'Unreachable: the BFF has no API key for this Bot';
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={item.name}
+        disabled={!item.reachable}
+        onPress={() => router.push({ pathname: '/bot/[botId]', params: { botId: item.id, name: item.name } })}
+        style={({ pressed }) => [
+          styles.row,
+          { borderColor: colors.border, opacity: !item.reachable ? 0.45 : pressed ? 0.6 : 1 },
+        ]}>
+        <BotAvatar name={item.name} />
+        <View style={styles.rowText}>
+          <Text style={[styles.name, { color: colors.text }]} numberOfLines={1}>
+            {item.name}
+          </Text>
+          {item.title ? (
+            <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
+              {item.title}
+            </Text>
+          ) : null}
+          {subtitle ? (
+            <Text style={[styles.preview, { color: colors.text }]} numberOfLines={1}>
+              {subtitle}
+            </Text>
+          ) : null}
+        </View>
+      </Pressable>
+    );
+  };
 
   return (
     <>
-      <Stack.Screen
-        options={{
-          headerRight: () => <Button title="New" onPress={newChat} />,
-          headerLeft: () => <Button title="Pair" onPress={() => router.push('/pair')} />,
-        }}
-      />
+      {header}
       <FlatList
-        data={sessions}
-        keyExtractor={(s) => s.id}
+        data={roster?.bots ?? []}
+        keyExtractor={(b) => b.id}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} />}
         ListHeaderComponent={error ? <Text style={[styles.error, { color: colors.notification }]}>{error}</Text> : undefined}
-        ListEmptyComponent={!loading && !error ? <Text style={[styles.empty, { color: colors.text }]}>No sessions yet. Tap New.</Text> : undefined}
-        renderItem={({ item }) => (
-          <Pressable
-            onPress={() => router.push({ pathname: '/chat/[sessionId]', params: { sessionId: item.id, title: item.title ?? '' } })}
-            style={({ pressed }) => [styles.row, { borderColor: colors.border, opacity: pressed ? 0.6 : 1 }]}>
-            <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
-              {item.title || item.preview || item.id}
-            </Text>
-            <Text style={{ color: colors.text, opacity: 0.6 }} numberOfLines={1}>
-              {[item.source, item.message_count != null ? `${item.message_count} messages` : null].filter(Boolean).join(' · ')}
-            </Text>
-          </Pressable>
-        )}
+        ListEmptyComponent={
+          roster && !error ? (
+            <Text style={[styles.empty, { color: colors.text }]}>No Bots yet. Create one in Hermes Desktop (Bots tab).</Text>
+          ) : undefined
+        }
+        renderItem={renderBot}
       />
     </>
   );
 }
 
 const styles = StyleSheet.create({
-  row: { paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, gap: 2 },
-  title: { fontSize: 16, fontWeight: '600' },
-  empty: { textAlign: 'center', marginTop: 48, opacity: 0.6 },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  rowText: { flex: 1, gap: 2 },
+  name: { fontSize: 16, fontWeight: '600' },
+  title: { fontSize: 13, opacity: 0.7 },
+  preview: { fontSize: 14, opacity: 0.6 },
+  empty: { textAlign: 'center', marginTop: 48, opacity: 0.6, paddingHorizontal: 24 },
   error: { padding: 16 },
 });

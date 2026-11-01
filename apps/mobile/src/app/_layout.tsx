@@ -6,9 +6,9 @@ export default function RootLayout() {
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack>
-        <Stack.Screen name="index" options={{ title: 'Hermes' }} />
+        <Stack.Screen name="index" options={{ title: 'Bots' }} />
         <Stack.Screen name="pair" options={{ title: 'Pair with BFF', presentation: 'modal' }} />
-        <Stack.Screen name="chat/[sessionId]" options={{ title: 'Chat' }} />
+        <Stack.Screen name="bot/[botId]" options={{ title: 'Bot Chat' }} />
       </Stack>
     </ThemeProvider>
   );
