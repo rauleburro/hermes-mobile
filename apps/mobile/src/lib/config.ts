@@ -10,6 +10,20 @@ export async function loadConfig(): Promise<BffConfig | null> {
   return raw ? (JSON.parse(raw) as BffConfig) : null;
 }
 
+/**
+ * The paired BFF URL, read synchronously so a screen's first frame can scope the local cache to it.
+ * Null when unpaired or unreadable.
+ */
+export function pairedUrl(): string | null {
+  try {
+    const raw = SecureStore.getItem(KEY);
+    const url = raw ? (JSON.parse(raw) as Partial<BffConfig>).url : undefined;
+    return typeof url === 'string' ? url : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Stores the pairing (the token only in secure storage) and binds the local cache to this BFF. */
 export async function saveConfig(config: BffConfig) {
   const url = config.url.replace(/\/$/, '');

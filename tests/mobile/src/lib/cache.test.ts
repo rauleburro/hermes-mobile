@@ -1,4 +1,5 @@
 import type { BotsResponse, SessionMessage } from '@hermes-mobile/api';
+import { BffError } from '@mobile/lib/bff';
 import {
   bindCache,
   cacheOwner,
@@ -8,6 +9,7 @@ import {
   clearCache,
   readChat,
   readRoster,
+  savedDataHint,
   writeChat,
   writeRoster,
 } from '@mobile/lib/cache';
@@ -20,7 +22,7 @@ const roster: BotsResponse = {
   bots: [{ id: 'default', name: 'Hermes', title: null, description: null, reachable: true }],
 };
 
-const msg = (i: number): SessionMessage => ({ role: i % 2 ? 'assistant' : 'user', content: `line ${i}` });
+const msg = (i: number): SessionMessage => ({ id: i, role: i % 2 ? 'assistant' : 'user', content: `line ${i}` });
 
 beforeEach(() => {
   cacheStorage().clearAll();
@@ -28,31 +30,68 @@ beforeEach(() => {
 
 describe('cache', () => {
   it('reads nothing before it is bound to a BFF', () => {
-    writeRoster(roster, {});
-    writeChat('default', 'chat-default', [msg(1)]);
+    writeRoster(BFF, roster, {});
+    writeChat(BFF, 'default', 'chat-default', [msg(1)]);
 
-    expect(readRoster()).toBeNull();
-    expect(readChat('default')).toBeNull();
+    expect(readRoster(BFF)).toBeNull();
+    expect(readChat(BFF, 'default')).toBeNull();
   });
 
   it('round-trips the roster with its previews once bound', () => {
     bindCache(BFF);
-    writeRoster(roster, { default: 'pong' });
+    writeRoster(BFF, roster, { default: 'pong' });
 
-    expect(readRoster()).toEqual({ roster, previews: { default: 'pong' }, savedAt: expect.any(Number) });
+    expect(readRoster(BFF)).toEqual({ roster, previews: { default: 'pong' }, savedAt: expect.any(Number) });
+  });
+
+  it('refuses a write fetched from another BFF than the one it is bound to', () => {
+    bindCache(OTHER_BFF);
+    writeRoster(BFF, roster, {});
+    writeChat(BFF, 'default', 'chat-default', [msg(1)]);
+
+    expect(cacheStorage().getAllKeys()).toEqual(['meta']);
+  });
+
+  it('reads nothing for a BFF other than the one it is bound to', () => {
+    bindCache(BFF);
+    writeRoster(BFF, roster, {});
+    writeChat(BFF, 'default', 'chat-default', [msg(1)]);
+
+    expect(readRoster(OTHER_BFF)).toBeNull();
+    expect(readRoster(null)).toBeNull();
+    expect(readChat(OTHER_BFF, 'default')).toBeNull();
+    expect(readRoster(BFF)?.roster).toEqual(roster);
   });
 
   it("keeps only each Bot Chat's last messages, per Bot", () => {
     bindCache(BFF);
     const many = Array.from({ length: CHAT_CACHE_LIMIT + 10 }, (_, i) => msg(i));
-    writeChat('default', 'chat-default', many);
-    writeChat('researcher', 'chat-researcher', [msg(1)]);
+    writeChat(BFF, 'default', 'chat-default', many);
+    writeChat(BFF, 'researcher', 'chat-researcher', [msg(1)]);
 
-    const cached = readChat('default');
+    const cached = readChat(BFF, 'default');
     expect(cached?.sessionId).toBe('chat-default');
     expect(cached?.messages).toHaveLength(CHAT_CACHE_LIMIT);
     expect(cached?.messages.at(-1)).toEqual(many.at(-1));
-    expect(readChat('researcher')?.messages).toEqual([msg(1)]);
+    expect(readChat(BFF, 'researcher')?.messages).toEqual([msg(1)]);
+  });
+
+  it('keeps only user and assistant text, reduced to id, role and content, before counting the last messages', () => {
+    bindCache(BFF);
+    const chat: SessionMessage[] = [
+      { id: 1, role: 'user', content: 'question', tool_calls: [{ id: 'c1' }], timestamp: 5 } as SessionMessage,
+      ...Array.from({ length: CHAT_CACHE_LIMIT }, (_, i) => ({ id: 100 + i, role: 'tool' as const, content: 'file contents' })),
+      { id: 2, role: 'system', content: 'system prompt' },
+      { id: 3, role: 'assistant', content: '' },
+      { id: 4, role: 'assistant', content: 'answer' },
+    ];
+    writeChat(BFF, 'default', 'chat-default', chat);
+
+    expect(readChat(BFF, 'default')?.messages).toEqual([
+      { id: 1, role: 'user', content: 'question' },
+      { id: 4, role: 'assistant', content: 'answer' },
+    ]);
+    expect(cacheStorage().getString('chat:default')).not.toContain('file contents');
   });
 
   it('reports which BFF it belongs to', () => {
@@ -65,50 +104,51 @@ describe('cache', () => {
 
   it('keeps the cache when re-bound to the same BFF', () => {
     bindCache(BFF);
-    writeRoster(roster, {});
+    writeRoster(BFF, roster, {});
     bindCache(BFF);
 
-    expect(readRoster()?.roster).toEqual(roster);
+    expect(readRoster(BFF)?.roster).toEqual(roster);
   });
 
   it('wipes everything when bound to a different BFF', () => {
     bindCache(BFF);
-    writeRoster(roster, {});
-    writeChat('default', 'chat-default', [msg(1)]);
+    writeRoster(BFF, roster, {});
+    writeChat(BFF, 'default', 'chat-default', [msg(1)]);
 
     bindCache(OTHER_BFF);
 
-    expect(readRoster()).toBeNull();
-    expect(readChat('default')).toBeNull();
+    expect(readRoster(OTHER_BFF)).toBeNull();
+    expect(readChat(OTHER_BFF, 'default')).toBeNull();
+    expect(cacheStorage().getAllKeys()).toEqual(['meta']);
   });
 
   it('wipes everything and unbinds on clearCache (unpair)', () => {
     bindCache(BFF);
-    writeRoster(roster, {});
+    writeRoster(BFF, roster, {});
     clearCache();
 
     expect(cacheStorage().getAllKeys()).toEqual([]);
-    writeRoster(roster, {});
-    expect(readRoster()).toBeNull();
+    writeRoster(BFF, roster, {});
+    expect(readRoster(BFF)).toBeNull();
   });
 
   it('discards a cache written with another schema version', () => {
     bindCache(BFF);
-    writeRoster(roster, {});
+    writeRoster(BFF, roster, {});
     const meta = JSON.parse(cacheStorage().getString('meta')!);
     cacheStorage().set('meta', JSON.stringify({ ...meta, v: CACHE_SCHEMA_VERSION - 1 }));
 
-    expect(readRoster()).toBeNull();
+    expect(readRoster(BFF)).toBeNull();
     expect(cacheStorage().getAllKeys()).toEqual([]);
   });
 
   it('drops a single entry from another schema version', () => {
     bindCache(BFF);
-    writeRoster(roster, {});
+    writeRoster(BFF, roster, {});
     const entry = JSON.parse(cacheStorage().getString('roster')!);
     cacheStorage().set('roster', JSON.stringify({ ...entry, v: CACHE_SCHEMA_VERSION + 1 }));
 
-    expect(readRoster()).toBeNull();
+    expect(readRoster(BFF)).toBeNull();
     expect(cacheStorage().contains('roster')).toBe(false);
   });
 
@@ -117,8 +157,8 @@ describe('cache', () => {
     cacheStorage().set('roster', '{not json');
     cacheStorage().set('chat:default', JSON.stringify({ v: CACHE_SCHEMA_VERSION, savedAt: 1, data: { messages: 'nope' } }));
 
-    expect(readRoster()).toBeNull();
-    expect(readChat('default')).toBeNull();
+    expect(readRoster(BFF)).toBeNull();
+    expect(readChat(BFF, 'default')).toBeNull();
     expect(cacheStorage().contains('roster')).toBe(false);
     expect(cacheStorage().contains('chat:default')).toBe(false);
   });
@@ -126,16 +166,16 @@ describe('cache', () => {
   it('survives a corrupt meta entry by starting over', () => {
     cacheStorage().set('meta', 'garbage');
 
-    expect(readRoster()).toBeNull();
+    expect(readRoster(BFF)).toBeNull();
     bindCache(BFF);
-    writeRoster(roster, {});
-    expect(readRoster()?.roster).toEqual(roster);
+    writeRoster(BFF, roster, {});
+    expect(readRoster(BFF)?.roster).toEqual(roster);
   });
 
   it('never stores the device token or the BFF URL in entries', () => {
     bindCache(BFF);
-    writeRoster(roster, {});
-    writeChat('default', 'chat-default', [msg(1)]);
+    writeRoster(BFF, roster, {});
+    writeChat(BFF, 'default', 'chat-default', [msg(1)]);
     const dump = cacheStorage()
       .getAllKeys()
       .filter((k) => k !== 'meta')
@@ -144,5 +184,18 @@ describe('cache', () => {
 
     expect(dump).not.toContain('token');
     expect(dump).not.toContain(BFF);
+  });
+});
+
+describe('savedDataHint', () => {
+  it('says offline only when the BFF could not be reached', () => {
+    expect(savedDataHint(new TypeError('Network request failed'), 'data')).toBe('Offline · showing saved data');
+    expect(savedDataHint(new Error('fetch failed'), 'messages')).toBe('Offline · showing saved messages');
+  });
+
+  it('shows the BFF error when it answered with one', () => {
+    expect(savedDataHint(new BffError('GET /bots failed (401)', 401), 'data')).toBe(
+      'GET /bots failed (401) · showing saved data',
+    );
   });
 });

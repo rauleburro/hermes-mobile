@@ -6,18 +6,24 @@ import { createMMKV, type MMKV } from 'react-native-mmkv';
  * last messages, saved per paired BFF. Reads are synchronous so screens can render cached data
  * in their first frame, then refresh from the BFF.
  *
- * Hygiene: holds no secrets (the device token stays in expo-secure-store). The `meta` entry
- * records the schema version and which BFF the data belongs to; binding to another BFF, unpairing
- * or a schema bump wipes everything. Corrupt or mismatched entries read as missing and are removed.
+ * Every read and write names the BFF it is for: the cache only answers for, and only accepts data
+ * fetched from, the BFF it is bound to. So a fetch that lands after re-pairing never ends up in the
+ * new BFF's cache, and a cache from another pairing never paints.
+ *
+ * Hygiene: holds no secrets (the device token stays in expo-secure-store) and only chat text
+ * (user and assistant lines; no tool output). The `meta` entry records the schema version and the
+ * owning BFF; binding to another BFF, unpairing or a schema bump wipes everything. Corrupt or
+ * mismatched entries read as missing and are removed.
  */
 
 /** Bump when the shape of any entry changes: older caches are discarded, never migrated. */
-export const CACHE_SCHEMA_VERSION = 1;
-/** Messages kept per Bot Chat. */
+export const CACHE_SCHEMA_VERSION = 2;
+/** Chat lines (user and assistant) kept per Bot Chat. */
 export const CHAT_CACHE_LIMIT = 50;
 
+export type CachedMessage = Pick<SessionMessage, 'id' | 'role' | 'content'>;
 export type CachedRoster = { roster: BotsResponse; previews: Record<string, string>; savedAt: number };
-export type CachedChat = { sessionId: string; messages: SessionMessage[]; savedAt: number };
+export type CachedChat = { sessionId: string; messages: CachedMessage[]; savedAt: number };
 
 type Meta = { v: number; owner: string };
 type Entry<T> = { v: number; savedAt: number; data: T };
@@ -57,12 +63,15 @@ function readMeta(): Meta | null {
   return null;
 }
 
+/** True when the cache is bound to exactly this BFF. */
+const ownedBy = (bffUrl: string | null) => bffUrl !== null && readMeta()?.owner === bffUrl;
+
 /**
  * Ties the cache to the paired BFF. Same BFF: keeps the cache. Different BFF (or none yet):
  * wipes it and starts a fresh one for `bffUrl`.
  */
 export function bindCache(bffUrl: string) {
-  if (readMeta()?.owner === bffUrl) return;
+  if (ownedBy(bffUrl)) return;
   const store = cacheStorage();
   store.clearAll();
   store.set(META, JSON.stringify({ v: CACHE_SCHEMA_VERSION, owner: bffUrl } satisfies Meta));
@@ -76,8 +85,8 @@ export function clearCache() {
   cacheStorage().clearAll();
 }
 
-function read<T>(key: string, valid: (data: unknown) => data is T): (T & { savedAt: number }) | null {
-  if (!readMeta()) return null;
+function read<T>(bffUrl: string | null, key: string, valid: (data: unknown) => data is T): (T & { savedAt: number }) | null {
+  if (!ownedBy(bffUrl)) return null;
   const store = cacheStorage();
   const entry = parse(store.getString(key));
   if (entry === undefined && !store.contains(key)) return null;
@@ -93,8 +102,9 @@ function read<T>(key: string, valid: (data: unknown) => data is T): (T & { saved
   return null;
 }
 
-function write<T>(key: string, data: T) {
-  if (!readMeta()) return; // Unbound: never cache data we can't attribute to a BFF.
+/** Saves data fetched from `bffUrl`, only if the cache still belongs to that BFF. */
+function write<T>(bffUrl: string, key: string, data: T) {
+  if (!ownedBy(bffUrl)) return;
   cacheStorage().set(key, JSON.stringify({ v: CACHE_SCHEMA_VERSION, savedAt: Date.now(), data } satisfies Entry<T>));
 }
 
@@ -108,25 +118,42 @@ const isRoster = (d: unknown): d is Omit<CachedRoster, 'savedAt'> =>
 const isChat = (d: unknown): d is Omit<CachedChat, 'savedAt'> =>
   isObject(d) && typeof d.sessionId === 'string' && Array.isArray(d.messages);
 
-export const readRoster = (): CachedRoster | null => read(ROSTER, isRoster);
+/** The saved roster of `bffUrl` (the paired BFF), or null. */
+export const readRoster = (bffUrl: string | null): CachedRoster | null => read(bffUrl, ROSTER, isRoster);
 
-/** Saves a roster fetched live from the BFF, with the previews known so far. */
-export function writeRoster(roster: BotsResponse, previews: Record<string, string | undefined>) {
+/** Saves a roster fetched from `bffUrl`, with the previews known so far. */
+export function writeRoster(bffUrl: string, roster: BotsResponse, previews: Record<string, string | undefined>) {
   const known = Object.fromEntries(Object.entries(previews).filter(([, p]) => typeof p === 'string')) as Record<
     string,
     string
   >;
-  write(ROSTER, { roster, previews: known });
+  write(bffUrl, ROSTER, { roster, previews: known });
 }
 
-export const readChat = (botId: string): CachedChat | null => read(chatKey(botId), isChat);
+/** The saved Bot Chat of `botId` on `bffUrl` (the paired BFF), or null. */
+export const readChat = (bffUrl: string | null, botId: string): CachedChat | null =>
+  read(bffUrl, chatKey(botId), isChat);
 
-/** Saves the last CHAT_CACHE_LIMIT messages of a Bot Chat fetched live from the BFF. */
-export function writeChat(botId: string, sessionId: string, messages: SessionMessage[]) {
-  write(chatKey(botId), { sessionId, messages: messages.slice(-CHAT_CACHE_LIMIT) });
+/** Saves the last CHAT_CACHE_LIMIT chat lines (user and assistant text only) of a Bot Chat fetched from `bffUrl`. */
+export function writeChat(bffUrl: string, botId: string, sessionId: string, messages: SessionMessage[]) {
+  const lines: CachedMessage[] = messages
+    .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content)
+    .map(({ id, role, content }) => ({ id, role, content }))
+    .slice(-CHAT_CACHE_LIMIT);
+  write(bffUrl, chatKey(botId), { sessionId, messages: lines });
 }
 
 /** Forgets one Bot Chat (e.g. the BFF says it no longer exists). */
 export function dropChat(botId: string) {
   cacheStorage().remove(chatKey(botId));
+}
+
+/**
+ * The hint shown next to saved data when a refresh failed: "Offline" only when the BFF couldn't
+ * be reached; when it answered with an error (a BffError carries its status), that error.
+ */
+export function savedDataHint(error: unknown, what: 'data' | 'messages'): string {
+  const status = isObject(error) ? error.status : undefined;
+  const reason = typeof status === 'number' && error instanceof Error ? error.message : 'Offline';
+  return `${reason} · showing saved ${what}`;
 }
