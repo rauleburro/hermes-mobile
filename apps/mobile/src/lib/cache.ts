@@ -134,10 +134,13 @@ export function writeRoster(bffUrl: string, roster: BotsResponse, previews: Reco
 export const readChat = (bffUrl: string | null, botId: string): CachedChat | null =>
   read(bffUrl, chatKey(botId), isChat);
 
-/** Saves the last CHAT_CACHE_LIMIT chat lines (user and assistant text only) of a Bot Chat fetched from `bffUrl`. */
+/**
+ * Saves the last CHAT_CACHE_LIMIT chat lines (user and assistant text only) of a Bot Chat fetched
+ * from `bffUrl`. Hidden rows are skipped, as in the live view: the saved copy drops `display_kind`.
+ */
 export function writeChat(bffUrl: string, botId: string, sessionId: string, messages: SessionMessage[]) {
   const lines: CachedMessage[] = messages
-    .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content)
+    .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content && m.display_kind !== 'hidden')
     .map(({ id, role, content }) => ({ id, role, content }))
     .slice(-CHAT_CACHE_LIMIT);
   write(bffUrl, chatKey(botId), { sessionId, messages: lines });

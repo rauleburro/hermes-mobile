@@ -94,6 +94,22 @@ describe('cache', () => {
     expect(cacheStorage().getString('chat:default')).not.toContain('file contents');
   });
 
+  it('never saves hidden rows, so the saved copy shows what the live view shows', () => {
+    bindCache(BFF);
+    const chat: SessionMessage[] = [
+      { id: 1, role: 'user', content: 'goal control', display_kind: 'hidden' },
+      { id: 2, role: 'user', content: 'question', display_kind: 'internal_notification' },
+      { id: 3, role: 'assistant', content: 'held turn', display_kind: 'hidden' },
+      { id: 4, role: 'assistant', content: 'answer' },
+    ];
+    writeChat(BFF, 'default', 'chat-default', chat);
+
+    expect(readChat(BFF, 'default')?.messages).toEqual([
+      { id: 2, role: 'user', content: 'question' },
+      { id: 4, role: 'assistant', content: 'answer' },
+    ]);
+  });
+
   it('reports which BFF it belongs to', () => {
     expect(cacheOwner()).toBeNull();
     bindCache(BFF);
