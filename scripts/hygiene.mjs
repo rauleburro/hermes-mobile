@@ -2,7 +2,7 @@
 // Generic public-repo hygiene check. Scans git-TRACKED files for things that
 // must never be committed to a public repository:
 //
-//   home-path    absolute home-directory paths (macOS, Linux, Windows) with a
+//   home-path    absolute home-directory paths (macOS, Linux, Windows, WSL) with a
 //                real user name. Placeholders (`<name>`, `$USER`, `...`) and
 //                shared system dirs are fine.
 //   env-file     a tracked `.env` / `.env.<name>` file (`.env.example`,
@@ -38,6 +38,8 @@ const END = "(?=[\\\\/\\s\"'`)\\]},;:]|$)";
 // Bracketed first letters keep this file's own source out of a plain-text grep.
 const UNIX_HOME = new RegExp(`(?<![\\w.~-])/(?:[U]sers|[h]ome)/(${NAME})${END}`, "g");
 const WIN_HOME = new RegExp(`(?<!\\w)[A-Za-z]:[\\\\/]+[U]sers[\\\\/]+(${NAME})${END}`, "g");
+// WSL view of a Windows home (the Windows users dir mounted under /mnt/<drive>).
+const WSL_HOME = new RegExp(`(?<![\\w.~-])/mnt/[a-z]/[U]sers/(${NAME})${END}`, "g");
 // Shared directories and conventional placeholders: not a person.
 const NOT_A_PERSON = new Set(["shared", "public", "default", "runner", "user", "username", "example"]);
 
@@ -51,7 +53,7 @@ function hasPersonalPath(re, line) {
 
 /** @type {{rule: string, test: (line: string) => boolean}[]} */
 const LINE_RULES = [
-  { rule: "home-path", test: (l) => hasPersonalPath(UNIX_HOME, l) || hasPersonalPath(WIN_HOME, l) },
+  { rule: "home-path", test: (l) => hasPersonalPath(UNIX_HOME, l) || hasPersonalPath(WIN_HOME, l) || hasPersonalPath(WSL_HOME, l) },
   { rule: "private-key", test: (l) => /-----BEGIN [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----/.test(l) },
   {
     rule: "token",
