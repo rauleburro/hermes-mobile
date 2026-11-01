@@ -49,7 +49,7 @@ adb shell am start -a android.intent.action.VIEW \
   -d 'exp+hermes-mobile://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081'
 ```
 
-(In a fork, the development-client scheme follows `APP_SLUG`: `exp+<slug>://`.)
+(In a fork, set the `APP_*` identifiers in `apps/mobile/.env.local`; the development-client scheme follows `APP_SLUG`: `exp+<slug>://`.)
 
 ### Pair with the BFF
 

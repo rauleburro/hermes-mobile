@@ -14,7 +14,7 @@ packages/api     Shared TypeScript types (app ⇄ BFF, Hermes run events)
 
 - **Stock Hermes.** Nothing is installed into or changed in Hermes: no patches, plugins, skills or hooks. The project only uses Hermes' public API, read-only reads of documented files (`profile.yaml`), and the documented `API_SERVER_*` settings. Anything missing is worked around in the BFF or the app.
 - **Bot Mode.** The app is a roster of Bots (Hermes profiles managed by Bot Mode), and each Bot has its canonical `Bot Chat`. There are no loose sessions.
-- **The Hermes key never reaches the phone.** Only the BFF holds `API_SERVER_KEY`; the phone gets its own device token.
+- **The Hermes key never reaches the phone.** Only the BFF holds the Hermes API key (`HERMES_API_KEY` in its `.env`, a copy of Hermes' `API_SERVER_KEY`, plus any `HERMES_PROFILE_KEY_*` for other Bots); the phone gets its own device token.
 
 ## Setup
 
@@ -39,23 +39,32 @@ Requires Node 24 (`nvm use`), pnpm and a running Hermes Agent with Bot Mode enab
 
 ## Building your own version
 
-You are welcome to build and publish your own build. The app identifiers come from environment variables, so a fork changes them without editing any tracked file. Set them in the shell when you run `npx expo run:android` (or EAS builds):
+You are welcome to build and publish your own build. The app identifiers come from environment variables, so a fork changes them without editing any tracked file:
 
 | Variable | What | Default |
 |---|---|---|
 | `APP_NAME` | Display name | `Hermes` |
-| `APP_SLUG` | Expo slug | `hermes-mobile` |
+| `APP_SLUG` | Expo slug (lowercase letters, digits, `-`) | `hermes-mobile` |
 | `APP_SCHEME` | URL scheme of the pairing link | `hermesmobile` |
 | `APP_BUNDLE_ID` | iOS bundle identifier | `dev.rauleburro.hermesmobile` |
 | `APP_ANDROID_PACKAGE` | Android application id | `dev.rauleburro.hermesmobile` |
 
+**Local builds:** put them in `apps/mobile/.env.local` (never committed: the repo ignores it). The Expo CLI loads that file for every command that evaluates the config (`npx expo run:android`, `pnpm mobile`, `npx expo config`), so Metro and the native build always agree:
+
 ```
-APP_NAME="My Bots" APP_SCHEME=mybots \
-APP_BUNDLE_ID=com.example.mybots APP_ANDROID_PACKAGE=com.example.mybots \
-  npx expo config --type public     # check the result; add `npx expo run:android` to build
+# apps/mobile/.env.local
+APP_NAME=My Bots
+APP_SLUG=my-bots
+APP_SCHEME=mybots
+APP_BUNDLE_ID=com.example.mybots
+APP_ANDROID_PACKAGE=com.example.mybots
 ```
 
-Invalid values (a scheme that is not a lowercase URI scheme, an id that is not reverse-DNS) fail loudly at config time. Blank values count as unset. If you change `APP_SCHEME`, put the same value in `services/bff/.env` so `pnpm pair` prints matching pairing links. Use your own identifiers consistently across builds: Android treats a different package as a different app, and changing identifiers needs a native rebuild.
+Check the result with `cd apps/mobile && npx expo config --type public`. Exporting the same variables in the shell also works, as long as every command that evaluates the config sees them.
+
+**EAS builds:** cloud workers don't see your local shell or `.env.local`. Set the variables in the `env` block of the build profile in your `eas.json`, or as EAS environment variables.
+
+Invalid values (a scheme that is not a lowercase URI scheme, an id that is not reverse-DNS) fail loudly at config time. Blank values count as unset. If you change `APP_SCHEME`, put the same value in `services/bff/.env` (or export it when running `pnpm pair`) so the pairing links match. Use your own identifiers consistently across builds: Android treats a different package as a different app, and changing identifiers needs a native rebuild.
 
 We build and publish our own release from this same public source, so anyone can audit what it runs.
 

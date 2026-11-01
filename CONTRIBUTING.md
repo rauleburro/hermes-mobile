@@ -8,7 +8,7 @@ Changes that break one of these will not be merged:
 
 - **Stock Hermes stays untouched.** Everything is solved in the BFF (`services/bff`) or the app (`apps/mobile`). No patches, plugins, skills or hooks installed into Hermes, no edits to its state. The project only uses Hermes' public API, read-only reads of documented files (`profile.yaml`) and the documented `API_SERVER_*` settings. If a feature needs Hermes to change, open an issue as an upstream feature request instead.
 - **Bot Mode is required.** The app is a roster of Bots (Hermes profiles), and each Bot has its canonical `Bot Chat`. There are no loose sessions.
-- **The Hermes API key never reaches the phone.** Only the BFF holds `API_SERVER_KEY`; the phone has its own device token.
+- **The Hermes API key never reaches the phone.** Only the BFF holds it (`HERMES_API_KEY`, its copy of Hermes' `API_SERVER_KEY`, plus any `HERMES_PROFILE_KEY_*`); the phone has its own device token.
 
 ## Test-first (TDD)
 
@@ -41,7 +41,7 @@ This repo is public. Never commit secrets, `.env` files, personal paths, IP addr
 
 ## Building your own version
 
-Forks and your own builds are welcome. The app name, slug, URL scheme, iOS bundle id and Android package come from environment variables (`APP_NAME`, `APP_SLUG`, `APP_SCHEME`, `APP_BUNDLE_ID`, `APP_ANDROID_PACKAGE`), so you don't edit tracked files. See [Building your own version](README.md#building-your-own-version) for the table and an example. Please keep the "unofficial client for Hermes Agent, not affiliated with Nous Research" line wherever your build is presented.
+Forks and your own builds are welcome. The app name, slug, URL scheme, iOS bundle id and Android package come from environment variables (`APP_NAME`, `APP_SLUG`, `APP_SCHEME`, `APP_BUNDLE_ID`, `APP_ANDROID_PACKAGE`, set in `apps/mobile/.env.local`), so you don't edit tracked files. See [Building your own version](README.md#building-your-own-version) for the table and an example. Please keep the "unofficial client for Hermes Agent, not affiliated with Nous Research" line wherever your build is presented.
 
 ## License
 
