@@ -34,6 +34,8 @@ export function runValidate({ cwd, steps = DEFAULT_STEPS, stdio = "inherit", log
       message: "Tracked files have uncommitted changes. Commit first (validation stamps the committed tree), then run `pnpm validate`.",
     };
   }
+  // Stamp only the tree the steps actually ran against.
+  const validatedTree = git(cwd, ["rev-parse", "HEAD^{tree}"]).trim();
   for (const step of steps) {
     log(`\n==> ${step.name}: ${[step.command, ...step.args].join(" ")}`);
     const res = spawnSync(step.command, step.args, { cwd, stdio, shell: process.platform === "win32" });
@@ -42,7 +44,7 @@ export function runValidate({ cwd, steps = DEFAULT_STEPS, stdio = "inherit", log
     }
   }
   try {
-    const tree = stamp(cwd);
+    const tree = stamp(cwd, validatedTree);
     return { ok: true, message: `Validated: stamped HEAD with tree ${tree}.` };
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : String(err) };

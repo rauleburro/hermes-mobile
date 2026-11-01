@@ -43,10 +43,13 @@ export function readTrailer(message) {
 
 /**
  * Amend HEAD's message with the current tree hash. The tree is untouched.
+ * With `expectedTree` (the tree that was validated), refuses if HEAD's tree is
+ * no longer that one, e.g. a commit or switch happened while the steps ran.
  * @param {string} cwd
+ * @param {string} [expectedTree]
  * @returns {string} the stamped tree hash
  */
-export function stamp(cwd) {
+export function stamp(cwd, expectedTree) {
   const dirty = git(cwd, ["status", "--porcelain", "--untracked-files=no"]).trim();
   if (dirty) {
     throw new Error(
@@ -54,16 +57,24 @@ export function stamp(cwd) {
     );
   }
   const tree = git(cwd, ["rev-parse", "HEAD^{tree}"]).trim();
+  if (expectedTree !== undefined && tree !== expectedTree) {
+    throw new Error(
+      "Refusing to stamp: HEAD changed during validation, so HEAD is not the code that was validated. Run `pnpm validate` again.",
+    );
+  }
   const message = git(cwd, ["log", "-1", "--format=%B", "HEAD"]);
   const stamped = git(
     cwd,
-    ["interpret-trailers", "--if-exists", "replace", "--trailer", `${TRAILER_KEY}: ${tree}`],
+    ["interpret-trailers", "--no-divider", "--if-exists", "replace", "--trailer", `${TRAILER_KEY}: ${tree}`],
     message,
   );
   // --allow-empty: the commit may legitimately be empty. --no-verify: no hook loops. verbatim: keep '#' lines of the original message.
   git(cwd, ["commit", "--amend", "--allow-empty", "--no-verify", "--cleanup=verbatim", "-q", "-F", "-"], stamped);
   const after = git(cwd, ["rev-parse", "HEAD^{tree}"]).trim();
   if (after !== tree) throw new Error("Internal error: stamping changed the tree.");
+  // The writer (interpret-trailers) and the reader (readTrailer) must agree.
+  const verified = check(cwd, "HEAD");
+  if (!verified.ok) throw new Error(`Internal error: the stamped receipt does not check: ${verified.message}`);
   return tree;
 }
 
@@ -121,9 +132,27 @@ export function parsePushRefs(input) {
 }
 
 /**
+ * True if the commit (or the commit a tag object points at) is already
+ * reachable from a remote-tracking ref: it was validated, or deliberately
+ * accepted (e.g. a squash merge on main), when it got there.
+ * @param {string} cwd
+ * @param {string} sha
+ */
+function alreadyOnRemote(cwd, sha) {
+  try {
+    return git(cwd, ["rev-list", "--max-count=1", `${sha}^{commit}`, "--not", "--remotes"]).trim() === "";
+  } catch {
+    return false; // unknown object: let check() report it
+  }
+}
+
+/**
  * Receipt check for every ref being pushed (the local sha, not HEAD).
- * A zero LOCAL sha is a deletion and is skipped; a zero remote sha is a new
- * branch and is checked like any other.
+ * A zero LOCAL sha is a deletion and is skipped. A sha already reachable from
+ * a remote-tracking ref is skipped too: that covers tags on main and new
+ * branches cut from an already-pushed commit. Tags are not skipped by name: a
+ * tag on a new, unvalidated commit would push untested code. A new branch at
+ * a new commit (zero remote sha) is checked like any other.
  * @param {string} cwd
  * @param {string} input git's pre-push stdin
  * @returns {{ok: boolean, messages: string[]}}
@@ -139,6 +168,7 @@ export function checkPush(cwd, input) {
   const messages = [];
   for (const { localRef, localSha } of refs) {
     if (ZERO_SHA.test(localSha)) continue;
+    if (alreadyOnRemote(cwd, localSha)) continue;
     const result = check(cwd, localSha);
     if (!result.ok) messages.push(`${localRef}: ${result.message}`);
   }

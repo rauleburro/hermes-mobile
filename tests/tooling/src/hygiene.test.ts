@@ -33,6 +33,16 @@ describe("scanText: home-directory paths", () => {
     expect(rules("C:/Us" + "ers/alice/Desktop")).toEqual(["home-path"]);
   });
 
+  it("flags a WSL path into a Windows home", () => {
+    expect(rules(`cd /mnt/c${MAC}alice/project`)).toEqual(["home-path"]);
+    expect(rules(`/mnt/d${MAC}alice`)).toEqual(["home-path"]);
+  });
+
+  it("does not flag WSL placeholders or shared directories", () => {
+    expect(rules(`/mnt/c${MAC}<name>/project`)).toEqual([]);
+    expect(rules(`/mnt/c${MAC}Public/x`)).toEqual([]);
+  });
+
   it("flags a path that ends right after the user name", () => {
     expect(rules(`HOME=${MAC}alice`)).toEqual(["home-path"]);
   });

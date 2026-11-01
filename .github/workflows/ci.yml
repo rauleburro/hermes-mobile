@@ -17,8 +17,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # PRs share one group per branch, so a new push cancels the superseded run.
+  # Each push to main gets its own group (keyed by commit), so no main commit's
+  # run is ever cancelled or dropped while pending.
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   receipt:

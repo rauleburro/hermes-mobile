@@ -89,6 +89,53 @@ describe("checkPush in a throwaway repo", () => {
     expect(checkPush(repo, line("refs/heads/new", head(), ZERO)).ok).toBe(false);
   });
 
+  describe("with a remote that already has the commit", () => {
+    let remote: string;
+
+    beforeEach(() => {
+      remote = mkdtempSync(join(tmpdir(), "receipt-remote-"));
+      git(remote, ["init", "-q", "--bare"]);
+      git(repo, ["remote", "add", "origin", remote]);
+      // An unstamped commit already on the remote (e.g. a squash merge on main).
+      git(repo, ["push", "-q", "--no-verify", "origin", "main"]);
+    });
+
+    afterEach(() => {
+      rmSync(remote, { recursive: true, force: true });
+    });
+
+    it("passes an annotated tag at an already-pushed unstamped commit", () => {
+      git(repo, ["tag", "-a", "v0.1.0", "-m", "release"]);
+      const tagObject = git(repo, ["rev-parse", "v0.1.0"]).trim();
+      expect(tagObject).not.toBe(head());
+      expect(checkPush(repo, line("refs/tags/v0.1.0", tagObject)).ok).toBe(true);
+    });
+
+    it("passes a lightweight tag at an already-pushed unstamped commit", () => {
+      git(repo, ["tag", "v0.1.1"]);
+      expect(checkPush(repo, line("refs/tags/v0.1.1", head())).ok).toBe(true);
+    });
+
+    it("passes a new branch cut at an already-pushed unstamped commit", () => {
+      git(repo, ["branch", "feature"]);
+      expect(checkPush(repo, line("refs/heads/feature", head())).ok).toBe(true);
+    });
+
+    it("still fails a new unstamped commit on top of it", () => {
+      commitFile("b.txt", "x\n", "new work");
+      const r = checkPush(repo, line("refs/heads/feature", head()));
+      expect(r.ok).toBe(false);
+      expect(r.messages.join("\n")).toContain("pnpm validate");
+    });
+
+    it("still fails a tag on a new unstamped commit", () => {
+      commitFile("b.txt", "x\n", "new work");
+      git(repo, ["tag", "-a", "v0.2.0", "-m", "release"]);
+      const tagObject = git(repo, ["rev-parse", "v0.2.0"]).trim();
+      expect(checkPush(repo, line("refs/tags/v0.2.0", tagObject)).ok).toBe(false);
+    });
+  });
+
   it("passes when there is nothing to push", () => {
     expect(checkPush(repo, "").ok).toBe(true);
   });

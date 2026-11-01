@@ -54,7 +54,7 @@ pnpm lint
 pnpm hygiene     # no personal paths, tracked .env files, keys or tokens
 ```
 
-Before opening a PR, commit your work and run `pnpm validate`: it runs all of the above and, only if everything passes, stamps the HEAD commit with a `Validated-tree: <hash>` trailer. The pre-push hook (installed by `pnpm install` through [lefthook](https://lefthook.dev); skip once with `LEFTHOOK=0`) refuses to push a commit whose stamp is missing or stale, so any change after validating means validating again. The pre-commit hook runs the hygiene check (and lint when app code changed).
+Before opening a PR, commit your work and run `pnpm validate`: it runs all of the above and, only if everything passes, stamps the HEAD commit with a `Validated-tree: <hash>` trailer. The pre-push hook (installed by `pnpm install` through [lefthook](https://lefthook.dev); skip once with `LEFTHOOK=0`) refuses to push a commit whose stamp is missing or stale, so any change after validating means validating again. Commits that are already on a remote (for example a tag on `main`, or a new branch cut from it) are not checked again. If the hook can't be installed (for example when `core.hooksPath` is set), `pnpm install` only prints a warning; run `npx lefthook install` by hand. The pre-commit hook runs the hygiene check (and lint when app code changed).
 
 The hygiene check scans tracked files only. A line that legitimately mentions something it would flag (for example documentation about what not to commit) can carry the marker `hygiene-allow` to be skipped.
 
