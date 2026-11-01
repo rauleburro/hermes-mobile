@@ -39,6 +39,22 @@ describe('PairScreen', () => {
     expect(screen.getByRole('button', { name: 'Pair' })).toBeEnabled();
   });
 
+  it('stays disabled while only the URL is filled', async () => {
+    await render(<PairScreen />);
+
+    await fillForm('http://bff.local:8787', '');
+
+    expect(screen.getByRole('button', { name: 'Pair' })).toBeDisabled();
+  });
+
+  it('stays disabled while only the token is filled', async () => {
+    await render(<PairScreen />);
+
+    await fillForm('', 'secret');
+
+    expect(screen.getByRole('button', { name: 'Pair' })).toBeDisabled();
+  });
+
   it('checks the BFF, stores the trimmed config and goes home', async () => {
     mockedCheckHealth.mockResolvedValue({ ok: true, hermes: true });
     await render(<PairScreen />);
