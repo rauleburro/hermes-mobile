@@ -99,12 +99,32 @@ function isNetworkFailure(error: unknown): boolean {
   return error instanceof Error && FETCH_FAILURE.test(error.message);
 }
 
+type HintOptions = {
+  env?: Env;
+  /** True when the app is known to hold Nearby devices: then the failure has another cause. */
+  granted?: boolean;
+};
+
 /**
  * The hint to show after `error` reaching the BFF at `url`, or null. Only for a network failure
  * (a blocked local connection may also never answer, so the request times out) against a local
- * address on Android 17 or later.
+ * address on Android 17 or later, while Nearby devices isn't known to be granted.
  */
-export function localNetworkHint(url: string | null, error: unknown, { env = Platform }: { env?: Env } = {}): string | null {
-  if (!url || !isNetworkFailure(error) || !gated(url, env)) return null;
+export function localNetworkHint(url: string | null, error: unknown, { env = Platform, granted = false }: HintOptions = {}): string | null {
+  if (granted || !url || !isNetworkFailure(error) || !gated(url, env)) return null;
   return LOCAL_NETWORK_HINT;
+}
+
+/**
+ * {@link localNetworkHint} for a caller that doesn't know the permission state: checks it (never
+ * asks) only when the hint would show. A check that fails counts as not granted.
+ */
+export async function checkedLocalNetworkHint(
+  url: string | null,
+  error: unknown,
+  { env = Platform, permissions = PermissionsAndroid }: { env?: Env; permissions?: LocalNetworkPermissions } = {},
+): Promise<string | null> {
+  if (!localNetworkHint(url, error, { env })) return null;
+  const granted = await permissions.check(LOCAL_NETWORK_PERMISSION).catch(() => false);
+  return localNetworkHint(url, error, { env, granted });
 }

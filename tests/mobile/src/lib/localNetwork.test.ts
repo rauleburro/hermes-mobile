@@ -1,8 +1,10 @@
 import { BffError } from '@mobile/lib/bff';
 import {
+  checkedLocalNetworkHint,
   ensureLocalNetworkAccess,
   isLocalNetworkUrl,
   localNetworkHint,
+  LOCAL_NETWORK_HINT,
   LOCAL_NETWORK_PERMISSION,
   type LocalNetworkPermissions,
 } from '@mobile/lib/localNetwork';
@@ -118,6 +120,11 @@ describe('localNetworkHint', () => {
     expect(localNetworkHint('http://192.168.1.10:8787', timeout, { env: android17 })).toMatch(/Nearby devices/);
   });
 
+  it('stays quiet when the app is known to hold Nearby devices: the failure has another cause', () => {
+    expect(localNetworkHint('http://192.168.1.10:8787', networkError, { env: android17, granted: true })).toBeNull();
+    expect(localNetworkHint('http://192.168.1.10:8787', networkError, { env: android17, granted: false })).toBe(LOCAL_NETWORK_HINT);
+  });
+
   it.each([
     ['the BFF answered with an error', 'http://192.168.1.10:8787', new BffError('GET /bots failed (500)', 500), android17],
     ['the app is not paired', 'http://192.168.1.10:8787', new BffError('Not paired with a BFF'), android17],
@@ -133,5 +140,39 @@ describe('localNetworkHint', () => {
     ['the platform is iOS', 'http://192.168.1.10:8787', networkError, ios],
   ] as const)('stays quiet when %s', (_case, url, error, env) => {
     expect(localNetworkHint(url, error, { env })).toBeNull();
+  });
+});
+
+describe('checkedLocalNetworkHint', () => {
+  const networkError = new TypeError('Network request failed');
+  const local = 'http://192.168.1.10:8787';
+
+  it('checks the permission before naming Nearby devices, and never asks for it', async () => {
+    const perms = permissions(false);
+
+    await expect(checkedLocalNetworkHint(local, networkError, { env: android17, permissions: perms })).resolves.toBe(LOCAL_NETWORK_HINT);
+
+    expect(perms.check).toHaveBeenCalledWith(LOCAL_NETWORK_PERMISSION);
+    expect(perms.request).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet when the app holds Nearby devices', async () => {
+    await expect(checkedLocalNetworkHint(local, networkError, { env: android17, permissions: permissions(true) })).resolves.toBeNull();
+  });
+
+  it('names Nearby devices when the check itself fails (not known to be granted)', async () => {
+    const perms = permissions(true);
+    perms.check.mockRejectedValue(new Error('PermissionsAndroid is not installed correctly.'));
+
+    await expect(checkedLocalNetworkHint(local, networkError, { env: android17, permissions: perms })).resolves.toBe(LOCAL_NETWORK_HINT);
+  });
+
+  it('does not check when no hint would show anyway', async () => {
+    const perms = permissions(false);
+
+    await expect(checkedLocalNetworkHint('http://localhost:8787', networkError, { env: android17, permissions: perms })).resolves.toBeNull();
+    await expect(checkedLocalNetworkHint(local, new Error('GET /bots failed (502)'), { env: android17, permissions: perms })).resolves.toBeNull();
+
+    expect(perms.check).not.toHaveBeenCalled();
   });
 });
