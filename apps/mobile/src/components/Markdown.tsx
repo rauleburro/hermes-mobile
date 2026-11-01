@@ -65,16 +65,19 @@ function parse(text: string): Token[] | null {
  */
 export function hasOpenableLinks(text: string): boolean {
   const tokens = parse(text);
-  return tokens ? tokens.some(containsOpenableLink) : false;
+  return tokens ? tokens.some((token) => containsOpenableLink(token)) : false;
 }
 
-function containsOpenableLink(token: Token): boolean {
+/** Counts nesting like the renderer: lists and quotes at MAX_DEPTH show as plain text. */
+function containsOpenableLink(token: Token, depth = 0): boolean {
   if (token.type === 'link' && OPENABLE.test((token as Tokens.Link).href)) return true;
+  const nests = token.type === 'list' || token.type === 'blockquote';
+  if (nests && depth >= MAX_DEPTH) return false;
   const children: Token[] = [
     ...(('tokens' in token && Array.isArray(token.tokens) ? token.tokens : []) as Token[]),
     ...(token.type === 'list' ? (token as Tokens.List).items : []),
   ];
-  return children.some(containsOpenableLink);
+  return children.some((child) => containsOpenableLink(child, nests ? depth + 1 : depth));
 }
 
 export function Markdown({ children }: { children: string }) {
@@ -109,6 +112,7 @@ function renderBlock(token: Token, colors: Colors, key: string, depth: number): 
   const text = { color: colors.text };
   switch (token.type) {
     case 'space':
+    case 'def': // reference definition: links that use it already carry its URL
     case 'checkbox': // shown as the list item's marker instead
       return null;
     case 'heading': {
