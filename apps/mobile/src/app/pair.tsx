@@ -1,3 +1,4 @@
+import type { HealthResponse } from '@hermes-mobile/api';
 import { router, useLocalSearchParams, useTheme } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Button, Linking, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -82,13 +83,22 @@ export default function PairScreen() {
       // (a build that doesn't declare the permission is "denied" yet keeps local access).
       const access = await ensureLocalNetworkAccess(normalized).catch(() => 'unknown');
       if (access === 'denied') setNetworkHint(LOCAL_NETWORK_HINT);
-      const health = await checkHealth(config);
-      await saveConfig(config);
+      let health: HealthResponse;
+      try {
+        health = await checkHealth(config);
+      } catch (error) {
+        setStatus(`Could not reach the BFF: ${(error as Error).message}`);
+        setNetworkHint(localNetworkHint(normalized, error));
+        return;
+      }
+      try {
+        await saveConfig(config);
+      } catch (error) {
+        setStatus(`Could not save the pairing on this device: ${(error as Error).message}`);
+        return;
+      }
       if (!health.hermes) setStatus('Paired, but the BFF cannot reach Hermes yet.');
       router.replace('/');
-    } catch (error) {
-      setStatus(`Could not reach the BFF: ${(error as Error).message}`);
-      setNetworkHint(normalized ? localNetworkHint(normalized, error) : null);
     } finally {
       setBusy(false);
     }

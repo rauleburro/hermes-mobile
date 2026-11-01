@@ -354,6 +354,24 @@ describe('PairScreen on the local network (Android 17 Nearby devices)', () => {
     expect(mockedSaveConfig).toHaveBeenCalled();
   });
 
+  it('says the pairing could not be saved, not that the BFF is unreachable, when secure storage fails', async () => {
+    const { localNetworkHint: realHint } = jest.requireActual<typeof import('@mobile/lib/localNetwork')>('@mobile/lib/localNetwork');
+    mockedHint.mockImplementation((url, error) => realHint(url, error, { OS: 'android', Version: 37 }));
+    mockedCheckHealth.mockResolvedValue({ ok: true, hermes: true });
+    mockedSaveConfig.mockRejectedValue(new Error("Calling the 'setValueWithKeyAsync' function has failed"));
+    await render(<PairScreen />);
+
+    const user = await fillForm('http://192.168.1.10:8787', 'secret');
+    await user.press(screen.getByRole('button', { name: 'Pair' }));
+
+    expect(
+      await screen.findByText("Could not save the pairing on this device: Calling the 'setValueWithKeyAsync' function has failed"),
+    ).toBeOnTheScreen();
+    expect(screen.queryByText(/Could not reach the BFF/)).toBeNull();
+    expect(screen.queryByText(LOCAL_NETWORK_HINT)).toBeNull();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
   it('shows no hint or settings button when the failure is not about the local network', async () => {
     mockedCheckHealth.mockRejectedValue(new Error('GET /health failed (500)'));
     await render(<PairScreen />);
