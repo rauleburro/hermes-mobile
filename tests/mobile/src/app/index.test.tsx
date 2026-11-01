@@ -1,11 +1,12 @@
 import type { BotSummary, BotsResponse, SessionMessage } from '@hermes-mobile/api';
 import { act, fireEvent, render, screen, userEvent, waitFor } from '@testing-library/react-native';
-import { StyleSheet } from 'react-native';
+import { Linking, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import HomeScreen from '@mobile/app/index';
 import { BffError, getBotChat, getBotMessages, listBots } from '@mobile/lib/bff';
 import { bindCache, cacheStorage, readRoster, writeRoster } from '@mobile/lib/cache';
 import { loadConfig, pairedUrl } from '@mobile/lib/config';
+import { LOCAL_NETWORK_HINT, localNetworkHint } from '@mobile/lib/localNetwork';
 
 jest.mock('expo-router', () => {
   const { useEffect } = jest.requireActual('react');
@@ -22,6 +23,8 @@ jest.mock('@mobile/lib/bff', () => {
   return { BffError: actual.BffError, listBots: jest.fn(), getBotChat: jest.fn(), getBotMessages: jest.fn() };
 });
 jest.mock('@mobile/lib/config', () => ({ loadConfig: jest.fn(), pairedUrl: jest.fn() }));
+// Whether a failure is Android 17's Nearby devices is covered by the localNetwork tests.
+jest.mock('@mobile/lib/localNetwork', () => ({ ...jest.requireActual('@mobile/lib/localNetwork'), localNetworkHint: jest.fn() }));
 
 const bot = (over: Partial<BotSummary>): BotSummary => ({
   id: 'default',
@@ -43,6 +46,7 @@ beforeEach(() => {
   jest.mocked(pairedUrl).mockReturnValue('http://bff.local:8787');
   jest.mocked(getBotChat).mockImplementation(async (botId) => ({ botId, sessionId: `chat-${botId}` }));
   jest.mocked(getBotMessages).mockResolvedValue([]);
+  jest.mocked(localNetworkHint).mockReturnValue(null);
 });
 
 describe('HomeScreen (Bots roster)', () => {
@@ -342,5 +346,59 @@ describe('HomeScreen header', () => {
 
     const action = StyleSheet.flatten(screen.getByTestId('pair-action').props.style);
     expect(action.marginEnd).toBeGreaterThanOrEqual(12);
+  });
+});
+
+describe('HomeScreen on the local network (Android 17 Nearby devices)', () => {
+  const BFF = 'http://bff.local:8787';
+  const networkError = new TypeError('Network request failed');
+
+  beforeEach(() => {
+    jest.mocked(localNetworkHint).mockImplementation((url, error) => (url === BFF && error === networkError ? LOCAL_NETWORK_HINT : null));
+  });
+
+  it('names Nearby devices under the error when the roster fails to load from a local BFF, and opens the settings', async () => {
+    jest.mocked(listBots).mockRejectedValue(networkError);
+    const openSettings = jest.spyOn(Linking, 'openSettings').mockResolvedValue(undefined);
+    await render(<HomeScreen />);
+
+    expect(await screen.findByText('Network request failed')).toBeOnTheScreen();
+    expect(screen.getByText(LOCAL_NETWORK_HINT)).toBeOnTheScreen();
+    await userEvent.setup().press(screen.getByRole('button', { name: 'Open settings' }));
+    expect(openSettings).toHaveBeenCalled();
+  });
+
+  it('names Nearby devices next to the saved roster too', async () => {
+    bindCache(BFF);
+    writeRoster(BFF, { botModeEnabled: true, bots: [bot({ id: 'default', name: 'Hermes' })] }, {});
+    jest.mocked(listBots).mockRejectedValue(networkError);
+    await render(<HomeScreen />);
+
+    expect(await screen.findByText('Offline · showing saved data')).toBeOnTheScreen();
+    expect(screen.getByText(LOCAL_NETWORK_HINT)).toBeOnTheScreen();
+    expect(screen.getByText('Hermes')).toBeOnTheScreen();
+  });
+
+  it('drops the hint once the roster loads', async () => {
+    jest.mocked(listBots).mockRejectedValueOnce(networkError);
+    await render(<HomeScreen />);
+    await screen.findByText(LOCAL_NETWORK_HINT);
+
+    roster([bot({ id: 'default', name: 'Hermes' })]);
+    await act(async () => {
+      fireEvent(screen.getByTestId('roster'), 'refresh');
+    });
+
+    expect(await screen.findByText('Hermes')).toBeOnTheScreen();
+    expect(screen.queryByText(LOCAL_NETWORK_HINT)).toBeNull();
+  });
+
+  it('shows no hint when the failure is not about the local network', async () => {
+    jest.mocked(listBots).mockRejectedValue(new Error('GET /bots failed (502)'));
+    await render(<HomeScreen />);
+
+    expect(await screen.findByText('GET /bots failed (502)')).toBeOnTheScreen();
+    expect(screen.queryByText(LOCAL_NETWORK_HINT)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open settings' })).toBeNull();
   });
 });
