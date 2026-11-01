@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react-native';
 import { Linking, Platform, StyleSheet } from 'react-native';
 import { Markdown } from '@mobile/components/Markdown';
-import { hasOpenableLinks } from '@mobile/lib/markdown';
+import { hasOpenableLinks as hasLinks, parseMarkdown } from '@mobile/lib/markdown';
 
 // The component reads its colors from the navigation theme. Each test can switch it.
 const LIGHT = { dark: false, colors: { text: 'rgb(28, 28, 30)', border: 'rgb(216, 216, 216)', primary: 'rgb(0, 122, 255)' } };
@@ -244,6 +244,8 @@ describe('Markdown', () => {
 });
 
 describe('hasOpenableLinks', () => {
+  const hasOpenableLinks = (text: string) => hasLinks(parseMarkdown(text));
+
   it('finds http(s) and mailto links, also nested in lists and quotes', () => {
     expect(hasOpenableLinks('See [docs](https://example.com)')).toBe(true);
     expect(hasOpenableLinks('- item\n  - [mail](mailto:a@example.com)')).toBe(true);

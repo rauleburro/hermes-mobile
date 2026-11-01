@@ -50,12 +50,11 @@ export function parseMarkdown(text: string): Token[] | null {
 }
 
 /**
- * Whether `text` renders at least one link that can be opened (http/https/mailto).
- * Containers use it to avoid grouping a reply into one accessibility element, which
- * would hide its links from screen readers.
+ * Whether a parsed reply (from {@link parseMarkdown}) renders at least one link that can be
+ * opened (http/https/mailto). Containers use it to avoid grouping a reply into one
+ * accessibility element, which would hide its links from screen readers.
  */
-export function hasOpenableLinks(text: string): boolean {
-  const tokens = parseMarkdown(text);
+export function hasOpenableLinks(tokens: Token[] | null): boolean {
   return tokens ? tokens.some((token) => containsOpenableLink(token)) : false;
 }
 

@@ -14,9 +14,13 @@ const HEADING_SIZES = [26, 22, 19, 17, 16, 15];
 
 type Colors = { text: ColorValue; border: ColorValue; primary: ColorValue };
 
-export function Markdown({ children }: { children: string }) {
+/**
+ * Renders `children` as Markdown. Pass `tokens` when the caller already parsed it with
+ * {@link parseMarkdown} (`null` renders it as plain text), so the reply is lexed only once.
+ */
+export function Markdown({ children, tokens: parsed }: { children: string; tokens?: Token[] | null }) {
   const { colors } = useTheme();
-  const tokens = useMemo(() => parseMarkdown(children), [children]);
+  const tokens = useMemo(() => (parsed !== undefined ? parsed : parseMarkdown(children)), [parsed, children]);
   return (
     <View style={styles.root}>
       {tokens ? (
