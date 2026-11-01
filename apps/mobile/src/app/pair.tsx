@@ -1,28 +1,45 @@
 import { router, useLocalSearchParams, useTheme } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Button, StyleSheet, Text, TextInput, View } from 'react-native';
 import { checkHealth } from '@/lib/bff';
-import { loadConfig, saveConfig } from '@/lib/config';
+import { type BffConfig, loadConfig, saveConfig } from '@/lib/config';
+import { normalizeBffUrl, parsePairParams } from '@/lib/pairing';
 
 // Reached manually or via hermesmobile://pair?url=…&token=… (the QR printed by `pnpm pair`).
+// The link only prefills the form: nothing is stored until the user taps Pair.
 export default function PairScreen() {
-  const params = useLocalSearchParams<{ url?: string; token?: string }>();
+  const params = useLocalSearchParams<{ url?: string | string[]; token?: string | string[] }>();
+  const link = useMemo(() => parsePairParams({ url: params.url, token: params.token }), [params.url, params.token]);
   const { colors } = useTheme();
-  const [url, setUrl] = useState(params.url ?? '');
-  const [token, setToken] = useState(params.token ?? '');
-  const [status, setStatus] = useState<string | null>(null);
+  const [url, setUrl] = useState(link.url ?? '');
+  const [token, setToken] = useState(link.token ?? '');
+  const [stored, setStored] = useState<BffConfig | null>(null);
+  const [status, setStatus] = useState<string | null>(link.error ?? null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (params.url) return;
-    loadConfig().then((c) => c && (setUrl(c.url), setToken(c.token)));
-  }, [params.url]);
+    loadConfig().then((c) => {
+      if (!c) return;
+      setStored(c);
+      // Values from the link win; the stored pairing only fills what the link left out.
+      if (!link.url && !link.error) setUrl(c.url);
+      if (!link.token) setToken(c.token);
+    });
+  }, [link]);
+
+  const replacing =
+    stored != null && ((link.url != null && link.url !== stored.url) || (link.token != null && link.token !== stored.token));
 
   async function pair() {
     setBusy(true);
     setStatus(null);
     try {
-      const config = { url: url.trim().replace(/\/$/, ''), token: token.trim() };
+      const normalized = normalizeBffUrl(url);
+      if (!normalized) {
+        setStatus('Enter the BFF URL as http://host:port or https://host.');
+        return;
+      }
+      const config = { url: normalized, token: token.trim() };
       const health = await checkHealth(config);
       await saveConfig(config);
       if (!health.hermes) setStatus('Paired, but the BFF cannot reach Hermes yet.');
@@ -41,6 +58,7 @@ export default function PairScreen() {
       <TextInput style={input} value={url} onChangeText={setUrl} placeholder="http://192.168.1.10:8787" autoCapitalize="none" autoCorrect={false} keyboardType="url" />
       <Text style={[styles.label, { color: colors.text }]}>Device token</Text>
       <TextInput style={input} value={token} onChangeText={setToken} placeholder="from `pnpm pair`" autoCapitalize="none" autoCorrect={false} secureTextEntry />
+      {replacing && <Text style={{ color: colors.text }}>Pairing replaces the current BFF ({stored?.url}).</Text>}
       {busy ? <ActivityIndicator /> : <Button title="Pair" onPress={pair} disabled={!url || !token} />}
       {status && <Text style={{ color: colors.notification }}>{status}</Text>}
     </View>
