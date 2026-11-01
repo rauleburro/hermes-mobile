@@ -99,9 +99,14 @@ export function useTurnPolling(
       // blur or background polls at once, since anything may have happened meanwhile.
       timer = setTimeout(poll, t.ran ? 0 : nextDelay());
       t.ran = true;
+      // The cap on its own clock, so a poll that hangs can't hold it off. Already past it (a long
+      // pause), the resume poll above gets its look first and expires after it.
+      const remaining = TURN_POLL_MAX_MS - (Date.now() - t.startedAt);
+      const capTimer = remaining > 0 ? setTimeout(expire, remaining) : undefined;
       return () => {
         stopped = true;
         clearTimeout(timer);
+        clearTimeout(capTimer);
       };
     }, [botId, active, appActive]),
   );

@@ -187,6 +187,34 @@ describe('useTurnPolling', () => {
     expect(onExpired).toHaveBeenCalledTimes(1);
   });
 
+  it('gives up on time even while a poll hangs', async () => {
+    jest.mocked(getBotChatMessages).mockImplementation(() => new Promise(() => {}));
+    const onExpired = jest.fn();
+    await renderHook(() => useTurnPolling('default', true, jest.fn(), onExpired));
+
+    await tick(TURN_POLL_MAX_MS - 1);
+    expect(onExpired).not.toHaveBeenCalled();
+    await tick(1);
+
+    expect(getBotChatMessages).toHaveBeenCalledTimes(1);
+    expect(onExpired).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the cap across a pause: it counts from the start of the turn', async () => {
+    const onExpired = jest.fn();
+    await renderHook(() => useTurnPolling('default', true, jest.fn(), onExpired));
+    jest.mocked(getBotChatMessages).mockImplementation(() => new Promise(() => {}));
+    await tick(TURN_POLL_MAX_MS / 2);
+    await act(async () => focus.blur());
+    await tick(60_000);
+    await act(async () => focus.refocus());
+
+    await tick(TURN_POLL_MAX_MS / 2 - 60_000 - 1);
+    expect(onExpired).not.toHaveBeenCalled();
+    await tick(1);
+    expect(onExpired).toHaveBeenCalledTimes(1);
+  });
+
   it('after a long background stay, polls once more before giving up', async () => {
     const onRows = jest.fn();
     const onExpired = jest.fn();
