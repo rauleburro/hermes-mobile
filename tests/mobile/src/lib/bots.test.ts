@@ -27,6 +27,19 @@ describe('lastMessagePreview', () => {
     expect(lastMessagePreview([msg('user', 'first'), msg('assistant', ''), msg('system', 'sys')])).toBe('first');
   });
 
+  it("shows an assistant reply as it reads once rendered, without Markdown syntax", () => {
+    const reply = '## Done\n\nSee **the [release notes](https://example.com/notes)** for `v2`.';
+    expect(lastMessagePreview([msg('user', 'hi'), msg('assistant', reply)])).toBe('Done See the release notes for v2.');
+  });
+
+  it('keeps what the user wrote literally', () => {
+    expect(lastMessagePreview([msg('user', 'use **stars** and `ticks`')])).toBe('use **stars** and `ticks`');
+  });
+
+  it('skips a reply that renders as nothing (only a reference definition)', () => {
+    expect(lastMessagePreview([msg('user', 'first'), msg('assistant', '[d]: https://example.com')])).toBe('first');
+  });
+
   it('is null when there is nothing to show', () => {
     expect(lastMessagePreview([])).toBeNull();
   });
