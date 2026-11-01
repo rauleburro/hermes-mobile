@@ -12,11 +12,13 @@ export function initials(name: string): string {
 /**
  * The last chat line (user or assistant) of a Bot Chat, collapsed to one line for the roster.
  * Replies read as they render (Markdown projected to plain text); user text stays literal.
+ * Hidden rows are skipped, as in the Bot Chat; internal notifications are not (the user's own
+ * Bot Chat sends are stored as one).
  */
 export function lastMessagePreview(messages: SessionMessage[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
-    const { role, content } = messages[i];
-    if ((role !== 'user' && role !== 'assistant') || !content) continue;
+    const { role, content, display_kind } = messages[i];
+    if ((role !== 'user' && role !== 'assistant') || !content || display_kind === 'hidden') continue;
     const text = (role === 'assistant' ? markdownToPlainText(content) : content).replace(/\s+/g, ' ').trim();
     if (text) return text;
   }

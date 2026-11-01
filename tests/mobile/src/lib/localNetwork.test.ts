@@ -1,8 +1,10 @@
 import { BffError } from '@mobile/lib/bff';
 import {
+  checkedLocalNetworkHint,
   ensureLocalNetworkAccess,
   isLocalNetworkUrl,
   localNetworkHint,
+  LOCAL_NETWORK_HINT,
   LOCAL_NETWORK_PERMISSION,
   type LocalNetworkPermissions,
 } from '@mobile/lib/localNetwork';
@@ -96,7 +98,7 @@ describe('localNetworkHint', () => {
   const networkError = new TypeError('Network request failed');
 
   it('names the Nearby devices permission and where to allow it after a network error to a local address', () => {
-    const hint = localNetworkHint('http://192.168.1.10:8787', networkError, android17);
+    const hint = localNetworkHint('http://192.168.1.10:8787', networkError, { env: android17 });
 
     expect(hint).toMatch(/Nearby devices/);
     expect(hint).toMatch(/Settings/);
@@ -105,13 +107,31 @@ describe('localNetworkHint', () => {
   it("also after Expo's fetch error, which is a plain Error (the app's global fetch since SDK 58)", () => {
     const expoFetchError = new Error('fetch failed: java.net.UnknownHostException: Unable to resolve host "bff.local"');
 
-    expect(localNetworkHint('http://bff.local:8787', expoFetchError, android17)).toMatch(/Nearby devices/);
+    expect(localNetworkHint('http://bff.local:8787', expoFetchError, { env: android17 })).toMatch(/Nearby devices/);
+  });
+
+  it('also after the exact error a Pixel on Android 17 gives for an unresolvable .local host', () => {
+    const onDevice = new Error(
+      'fetch failed: java.net.UnknownHostException: Unable to resolve host "no-such-bff.local": No address associated with hostname',
+    );
+
+    expect(localNetworkHint('http://no-such-bff.local:8787', onDevice, { env: android17 })).toBe(LOCAL_NETWORK_HINT);
+    expect(localNetworkHint('http://no-such-bff.local:8787', onDevice, { env: android17, granted: true })).toBeNull();
+  });
+
+  it("also after React Native's own fetch timeout", () => {
+    expect(localNetworkHint('http://192.168.1.10:8787', new TypeError('Network request timed out'), { env: android17 })).toMatch(/Nearby devices/);
   });
 
   it('also after a request timeout: a blocked local connection never answers, so the app gives up at 15 s', () => {
     const timeout = new BffError('GET /bots timed out', undefined, 'timeout');
 
-    expect(localNetworkHint('http://192.168.1.10:8787', timeout, android17)).toMatch(/Nearby devices/);
+    expect(localNetworkHint('http://192.168.1.10:8787', timeout, { env: android17 })).toMatch(/Nearby devices/);
+  });
+
+  it('stays quiet when the app is known to hold Nearby devices: the failure has another cause', () => {
+    expect(localNetworkHint('http://192.168.1.10:8787', networkError, { env: android17, granted: true })).toBeNull();
+    expect(localNetworkHint('http://192.168.1.10:8787', networkError, { env: android17, granted: false })).toBe(LOCAL_NETWORK_HINT);
   });
 
   it.each([
@@ -119,12 +139,49 @@ describe('localNetworkHint', () => {
     ['the app is not paired', 'http://192.168.1.10:8787', new BffError('Not paired with a BFF'), android17],
     ['the request was aborted by the app', 'http://192.168.1.10:8787', new BffError('GET /bots aborted', undefined, 'aborted'), android17],
     ['a timeout carries an HTTP status', 'http://192.168.1.10:8787', new BffError('GET /bots failed (504)', 504, 'timeout'), android17],
+    ['secure storage failed to save the pairing', 'http://192.168.1.10:8787', new Error("Calling the 'setValueWithKeyAsync' function has failed"), android17],
+    ['a 200 answer was not JSON (captive portal, wrong port)', 'http://192.168.1.10:8787', new SyntaxError('JSON Parse error: Unexpected character: <'), android17],
+    ['the roster was malformed', 'http://192.168.1.10:8787', new TypeError("Cannot read property 'filter' of undefined"), android17],
     ['the address is loopback', 'http://localhost:8787', networkError, android17],
     ['the address is public', 'https://bff.example.com', networkError, android17],
     ['there is no URL', null, networkError, android17],
     ['Android is older than 17', 'http://192.168.1.10:8787', networkError, android16],
     ['the platform is iOS', 'http://192.168.1.10:8787', networkError, ios],
   ] as const)('stays quiet when %s', (_case, url, error, env) => {
-    expect(localNetworkHint(url, error, env)).toBeNull();
+    expect(localNetworkHint(url, error, { env })).toBeNull();
+  });
+});
+
+describe('checkedLocalNetworkHint', () => {
+  const networkError = new TypeError('Network request failed');
+  const local = 'http://192.168.1.10:8787';
+
+  it('checks the permission before naming Nearby devices, and never asks for it', async () => {
+    const perms = permissions(false);
+
+    await expect(checkedLocalNetworkHint(local, networkError, { env: android17, permissions: perms })).resolves.toBe(LOCAL_NETWORK_HINT);
+
+    expect(perms.check).toHaveBeenCalledWith(LOCAL_NETWORK_PERMISSION);
+    expect(perms.request).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet when the app holds Nearby devices', async () => {
+    await expect(checkedLocalNetworkHint(local, networkError, { env: android17, permissions: permissions(true) })).resolves.toBeNull();
+  });
+
+  it('names Nearby devices when the check itself fails (not known to be granted)', async () => {
+    const perms = permissions(true);
+    perms.check.mockRejectedValue(new Error('PermissionsAndroid is not installed correctly.'));
+
+    await expect(checkedLocalNetworkHint(local, networkError, { env: android17, permissions: perms })).resolves.toBe(LOCAL_NETWORK_HINT);
+  });
+
+  it('does not check when no hint would show anyway', async () => {
+    const perms = permissions(false);
+
+    await expect(checkedLocalNetworkHint('http://localhost:8787', networkError, { env: android17, permissions: perms })).resolves.toBeNull();
+    await expect(checkedLocalNetworkHint(local, new Error('GET /bots failed (502)'), { env: android17, permissions: perms })).resolves.toBeNull();
+
+    expect(perms.check).not.toHaveBeenCalled();
   });
 });

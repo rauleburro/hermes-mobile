@@ -8,7 +8,7 @@ import { BffError, getBotChat, getBotMessages, listBots } from '@/lib/bff';
 import { lastMessagePreview } from '@/lib/bots';
 import { bindCache, readRoster, savedDataHint, writeRoster } from '@/lib/cache';
 import { loadConfig, pairedUrl } from '@/lib/config';
-import { localNetworkHint } from '@/lib/localNetwork';
+import { checkedLocalNetworkHint } from '@/lib/localNetwork';
 
 const NO_BOT_CHAT = 'No Bot Chat yet';
 
@@ -40,7 +40,7 @@ export default function HomeScreen() {
   const owner = useRef(initial.owner);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** Why the saved roster is on screen after a failed refresh ("Offline", or the BFF's error). */
+  /** Why the roster on screen may be old after a failed refresh ("Offline", or the BFF's error). */
   const [savedHint, setSavedHint] = useState<string | null>(null);
   /** Why Android may be blocking the BFF (Nearby devices on Android 17), shown under the error. */
   const [networkHint, setNetworkHint] = useState<string | null>(null);
@@ -85,7 +85,10 @@ export default function HomeScreen() {
       if (current === generation.current) {
         setError((e as Error).message);
         setSavedHint(savedDataHint(e, 'data'));
-        setNetworkHint(localNetworkHint(url, e));
+        // Checks Nearby devices first (no prompt); a refresh started meanwhile owns the hint.
+        checkedLocalNetworkHint(url, e).then((hint) => {
+          if (current === generation.current) setNetworkHint(hint);
+        });
       }
     } finally {
       // Only the latest refresh owns the spinner.
@@ -170,8 +173,14 @@ export default function HomeScreen() {
         onRefresh={refresh}
         ListHeaderComponent={
           <>
-            {fromCache && (loading || error) ? (
-              <Text style={[styles.hint, { color: colors.text }]}>{error ? savedHint : 'Updating…'}</Text>
+            {roster && error ? (
+              // A roster is on screen (saved, or fresh from an earlier refresh): keep it, say why it may be old.
+              <View style={styles.hintRow}>
+                <Text style={[styles.hint, styles.hintText, { color: colors.text }]}>{savedHint}</Text>
+                <Button title="Retry" onPress={refresh} />
+              </View>
+            ) : fromCache && loading ? (
+              <Text style={[styles.hint, { color: colors.text }]}>Updating…</Text>
             ) : error ? (
               <Text style={[styles.error, { color: colors.notification }]}>{error}</Text>
             ) : null}
@@ -211,5 +220,7 @@ const styles = StyleSheet.create({
   empty: { textAlign: 'center', marginTop: 48, opacity: 0.6, paddingHorizontal: 24 },
   error: { padding: 16 },
   networkHint: { paddingHorizontal: 16, paddingBottom: 12, gap: 8 },
+  hintRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 16 },
+  hintText: { flexShrink: 1 },
   hint: { paddingHorizontal: 16, paddingVertical: 6, fontSize: 12, opacity: 0.6, textAlign: 'center' },
 });

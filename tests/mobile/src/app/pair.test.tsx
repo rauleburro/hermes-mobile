@@ -321,7 +321,7 @@ describe('PairScreen on the local network (Android 17 Nearby devices)', () => {
 
     expect(await screen.findByText('Could not reach the BFF: Network request failed')).toBeOnTheScreen();
     expect(screen.getByText(LOCAL_NETWORK_HINT)).toBeOnTheScreen();
-    expect(mockedHint).toHaveBeenCalledWith('http://hermes-bff.local:9', error);
+    expect(mockedHint).toHaveBeenCalledWith('http://hermes-bff.local:9', error, { granted: false });
 
     await user.press(screen.getByRole('button', { name: 'Open settings' }));
     expect(openSettings).toHaveBeenCalled();
@@ -329,7 +329,7 @@ describe('PairScreen on the local network (Android 17 Nearby devices)', () => {
 
   it('keeps the denied Nearby devices hint when the health check then times out', async () => {
     const { localNetworkHint: realHint } = jest.requireActual<typeof import('@mobile/lib/localNetwork')>('@mobile/lib/localNetwork');
-    mockedHint.mockImplementation((url, error) => realHint(url, error, { OS: 'android', Version: 37 }));
+    mockedHint.mockImplementation((url, error, options) => realHint(url, error, { ...options, env: { OS: 'android', Version: 37 } }));
     mockedEnsureAccess.mockResolvedValue('denied');
     mockedCheckHealth.mockRejectedValue(new BffError('GET /health timed out', undefined, 'timeout'));
     await render(<PairScreen />);
@@ -342,6 +342,25 @@ describe('PairScreen on the local network (Android 17 Nearby devices)', () => {
     expect(screen.getByRole('button', { name: 'Open settings' })).toBeOnTheScreen();
   });
 
+  it.each([
+    ['granted', false],
+    ['denied', true],
+    ['unknown', true],
+  ] as const)('after a network error to a local BFF with Nearby devices %s, shows the hint: %s', async (access, shown) => {
+    const { localNetworkHint: realHint } = jest.requireActual<typeof import('@mobile/lib/localNetwork')>('@mobile/lib/localNetwork');
+    mockedHint.mockImplementation((url, error, options) => realHint(url, error, { ...options, env: { OS: 'android', Version: 37 } }));
+    if (access === 'unknown') mockedEnsureAccess.mockRejectedValue(new Error('PermissionsAndroid is not installed correctly.'));
+    else mockedEnsureAccess.mockResolvedValue(access);
+    mockedCheckHealth.mockRejectedValue(new TypeError('Network request failed'));
+    await render(<PairScreen />);
+
+    const user = await fillForm('http://192.168.1.10:8787', 'secret');
+    await user.press(screen.getByRole('button', { name: 'Pair' }));
+
+    expect(await screen.findByText('Could not reach the BFF: Network request failed')).toBeOnTheScreen();
+    expect(screen.queryByText(LOCAL_NETWORK_HINT) !== null).toBe(shown);
+  });
+
   it('still pairs when asking for the permission itself fails', async () => {
     mockedEnsureAccess.mockRejectedValue(new Error('PermissionsAndroid is not installed correctly.'));
     mockedCheckHealth.mockResolvedValue({ ok: true, hermes: true });
@@ -352,6 +371,38 @@ describe('PairScreen on the local network (Android 17 Nearby devices)', () => {
 
     await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/'));
     expect(mockedSaveConfig).toHaveBeenCalled();
+  });
+
+  it('says the pairing could not be saved, not that the BFF is unreachable, when secure storage fails', async () => {
+    const { localNetworkHint: realHint } = jest.requireActual<typeof import('@mobile/lib/localNetwork')>('@mobile/lib/localNetwork');
+    mockedHint.mockImplementation((url, error, options) => realHint(url, error, { ...options, env: { OS: 'android', Version: 37 } }));
+    mockedCheckHealth.mockResolvedValue({ ok: true, hermes: true });
+    mockedSaveConfig.mockRejectedValue(new Error("Calling the 'setValueWithKeyAsync' function has failed"));
+    await render(<PairScreen />);
+
+    const user = await fillForm('http://192.168.1.10:8787', 'secret');
+    await user.press(screen.getByRole('button', { name: 'Pair' }));
+
+    expect(
+      await screen.findByText("Could not save the pairing on this device: Calling the 'setValueWithKeyAsync' function has failed"),
+    ).toBeOnTheScreen();
+    expect(screen.queryByText(/Could not reach the BFF/)).toBeNull();
+    expect(screen.queryByText(LOCAL_NETWORK_HINT)).toBeNull();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  it('drops the denied Nearby devices hint once the BFF answered, even if saving the pairing then fails', async () => {
+    mockedEnsureAccess.mockResolvedValue('denied');
+    mockedCheckHealth.mockResolvedValue({ ok: true, hermes: true });
+    mockedSaveConfig.mockRejectedValue(new Error("Calling the 'setValueWithKeyAsync' function has failed"));
+    await render(<PairScreen />);
+
+    const user = await fillForm('http://192.168.1.10:8787', 'secret');
+    await user.press(screen.getByRole('button', { name: 'Pair' }));
+
+    expect(await screen.findByText(/Could not save the pairing on this device/)).toBeOnTheScreen();
+    expect(screen.queryByText(LOCAL_NETWORK_HINT)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open settings' })).toBeNull();
   });
 
   it('shows no hint or settings button when the failure is not about the local network', async () => {

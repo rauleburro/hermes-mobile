@@ -8,6 +8,7 @@ import {
   getBotChat,
   getBotChatMessages,
   getBotMessages,
+  REQUEST_TIMEOUT_MS,
   sendBotMessage,
   stopBotRun,
 } from '@mobile/lib/bff';
@@ -41,6 +42,7 @@ jest.mock('@mobile/lib/bff', () => {
   const actual = jest.requireActual('@mobile/lib/bff');
   return {
     BffError: actual.BffError,
+    REQUEST_TIMEOUT_MS: actual.REQUEST_TIMEOUT_MS,
     getBotChat: jest.fn(),
     getBotMessages: jest.fn(),
     getBotChatMessages: jest.fn(),
@@ -635,6 +637,24 @@ describe('BotChatScreen tool cards', () => {
 
       await waitFor(() => expect(screen.queryByText(/Couldn't refresh the Bot Chat/)).toBeNull());
       expect(screen.getAllByText('answer N')).toHaveLength(1);
+    });
+
+    it('reloads with rows on screen (end of turn, Refresh, catch-up before a send) on the default 15 s budget, so a dead BFF fails a send fast', async () => {
+      await turnWithFailedReload(); // 1: first load, 2: end-of-turn reload
+      jest.mocked(getBotMessages).mockRejectedValue(new Error('still down'));
+      await userEvent.setup({ advanceTimers: jest.advanceTimersByTime }).press(screen.getByRole('button', { name: 'Refresh' }));
+      await waitFor(() => expect(getBotMessages).toHaveBeenCalledTimes(3));
+      controllableRun();
+      await sendWithTimers('continue');
+      await waitFor(() => expect(getBotMessages).toHaveBeenCalledTimes(4));
+
+      expect(REQUEST_TIMEOUT_MS).toBe(15_000);
+      const short = { timeoutMs: REQUEST_TIMEOUT_MS };
+      // Only the first full load keeps getBotMessages' longer history default.
+      expect(getBotMessages).toHaveBeenNthCalledWith(1, 'default', 'chat-default');
+      expect(getBotMessages).toHaveBeenNthCalledWith(2, 'default', 'chat-default', short);
+      expect(getBotMessages).toHaveBeenNthCalledWith(3, 'default', 'chat-default', short);
+      expect(getBotMessages).toHaveBeenNthCalledWith(4, 'default', 'chat-default', short);
     });
 
     it('reloads stale rows before the next turn, so an identical prompt never ends on the previous answer', async () => {

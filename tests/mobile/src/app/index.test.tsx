@@ -1,12 +1,12 @@
 import type { BotSummary, BotsResponse, SessionMessage } from '@hermes-mobile/api';
 import { act, fireEvent, render, screen, userEvent, waitFor } from '@testing-library/react-native';
-import { Linking, StyleSheet } from 'react-native';
+import { Linking, PermissionsAndroid, Platform, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import HomeScreen from '@mobile/app/index';
 import { BffError, getBotChat, getBotMessages, listBots } from '@mobile/lib/bff';
 import { bindCache, cacheStorage, readRoster, writeRoster } from '@mobile/lib/cache';
 import { loadConfig, pairedUrl } from '@mobile/lib/config';
-import { LOCAL_NETWORK_HINT, localNetworkHint } from '@mobile/lib/localNetwork';
+import { checkedLocalNetworkHint, LOCAL_NETWORK_HINT } from '@mobile/lib/localNetwork';
 
 jest.mock('expo-router', () => {
   const { useEffect } = jest.requireActual('react');
@@ -24,7 +24,10 @@ jest.mock('@mobile/lib/bff', () => {
 });
 jest.mock('@mobile/lib/config', () => ({ loadConfig: jest.fn(), pairedUrl: jest.fn() }));
 // Whether a failure is Android 17's Nearby devices is covered by the localNetwork tests.
-jest.mock('@mobile/lib/localNetwork', () => ({ ...jest.requireActual('@mobile/lib/localNetwork'), localNetworkHint: jest.fn() }));
+jest.mock('@mobile/lib/localNetwork', () => ({
+  ...jest.requireActual('@mobile/lib/localNetwork'),
+  checkedLocalNetworkHint: jest.fn(),
+}));
 
 const bot = (over: Partial<BotSummary>): BotSummary => ({
   id: 'default',
@@ -46,7 +49,7 @@ beforeEach(() => {
   jest.mocked(pairedUrl).mockReturnValue('http://bff.local:8787');
   jest.mocked(getBotChat).mockImplementation(async (botId) => ({ botId, sessionId: `chat-${botId}` }));
   jest.mocked(getBotMessages).mockResolvedValue([]);
-  jest.mocked(localNetworkHint).mockReturnValue(null);
+  jest.mocked(checkedLocalNetworkHint).mockResolvedValue(null);
 });
 
 describe('HomeScreen (Bots roster)', () => {
@@ -277,6 +280,40 @@ describe('HomeScreen with the local cache', () => {
     expect(readRoster(BFF)?.previews).toEqual({ default: 'saved pong' });
   });
 
+  it('keeps a fresh roster on screen with the offline hint and Retry when a later refresh times out', async () => {
+    roster([bot({ id: 'default', name: 'Hermes' })]);
+    await render(<HomeScreen />);
+    expect(await screen.findByText('Hermes')).toBeOnTheScreen();
+    jest.mocked(listBots).mockRejectedValueOnce(new BffError('GET /bots timed out', undefined, 'timeout'));
+
+    await act(async () => {
+      fireEvent(screen.getByTestId('roster'), 'refresh');
+    });
+
+    expect(await screen.findByText('Offline · showing saved data')).toBeOnTheScreen();
+    expect(screen.queryByText('GET /bots timed out')).toBeNull();
+    expect(screen.getByText('Hermes')).toBeOnTheScreen();
+
+    await userEvent.setup().press(screen.getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => expect(screen.queryByText(/showing saved data/)).toBeNull());
+    expect(listBots).toHaveBeenCalledTimes(3);
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
+  it('offers Retry next to the saved roster when the BFF cannot be reached', async () => {
+    cached([bot({ id: 'default', name: 'Hermes' })]);
+    jest.mocked(listBots).mockRejectedValueOnce(new TypeError('Network request failed'));
+    roster([bot({ id: 'default', name: 'Hermes' })]);
+    await render(<HomeScreen />);
+    expect(await screen.findByText('Offline · showing saved data')).toBeOnTheScreen();
+
+    await userEvent.setup().press(screen.getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => expect(screen.queryByText(/showing saved data/)).toBeNull());
+    expect(listBots).toHaveBeenCalledTimes(2);
+  });
+
   it("shows the BFF's error, not 'Offline', next to the saved roster when the BFF answered with one", async () => {
     cached([bot({ id: 'default', name: 'Hermes' })]);
     jest.mocked(listBots).mockRejectedValue(new BffError('GET /bots failed (401)', 401, 'unauthorized'));
@@ -354,7 +391,7 @@ describe('HomeScreen on the local network (Android 17 Nearby devices)', () => {
   const networkError = new TypeError('Network request failed');
 
   beforeEach(() => {
-    jest.mocked(localNetworkHint).mockImplementation((url, error) => (url === BFF && error === networkError ? LOCAL_NETWORK_HINT : null));
+    jest.mocked(checkedLocalNetworkHint).mockImplementation(async (url, error) => (url === BFF && error === networkError ? LOCAL_NETWORK_HINT : null));
   });
 
   it('names Nearby devices under the error when the roster fails to load from a local BFF, and opens the settings', async () => {
@@ -363,7 +400,7 @@ describe('HomeScreen on the local network (Android 17 Nearby devices)', () => {
     await render(<HomeScreen />);
 
     expect(await screen.findByText('Network request failed')).toBeOnTheScreen();
-    expect(screen.getByText(LOCAL_NETWORK_HINT)).toBeOnTheScreen();
+    expect(await screen.findByText(LOCAL_NETWORK_HINT)).toBeOnTheScreen();
     await userEvent.setup().press(screen.getByRole('button', { name: 'Open settings' }));
     expect(openSettings).toHaveBeenCalled();
   });
@@ -375,7 +412,7 @@ describe('HomeScreen on the local network (Android 17 Nearby devices)', () => {
     await render(<HomeScreen />);
 
     expect(await screen.findByText('Offline · showing saved data')).toBeOnTheScreen();
-    expect(screen.getByText(LOCAL_NETWORK_HINT)).toBeOnTheScreen();
+    expect(await screen.findByText(LOCAL_NETWORK_HINT)).toBeOnTheScreen();
     expect(screen.getByText('Hermes')).toBeOnTheScreen();
   });
 
@@ -395,12 +432,60 @@ describe('HomeScreen on the local network (Android 17 Nearby devices)', () => {
 
   it('names Nearby devices when the roster request times out (Android drops blocked local traffic silently)', async () => {
     const { localNetworkHint: realHint } = jest.requireActual<typeof import('@mobile/lib/localNetwork')>('@mobile/lib/localNetwork');
-    jest.mocked(localNetworkHint).mockImplementation((url, error) => realHint(url, error, { OS: 'android', Version: 37 }));
+    jest.mocked(checkedLocalNetworkHint).mockImplementation(async (url, error) => realHint(url, error, { env: { OS: 'android', Version: 37 } }));
     jest.mocked(listBots).mockRejectedValue(new BffError('GET /bots timed out', undefined, 'timeout'));
     await render(<HomeScreen />);
 
     expect(await screen.findByText('GET /bots timed out')).toBeOnTheScreen();
-    expect(screen.getByText(LOCAL_NETWORK_HINT)).toBeOnTheScreen();
+    expect(await screen.findByText(LOCAL_NETWORK_HINT)).toBeOnTheScreen();
+  });
+
+  it("drops an older refresh's hint that lands after a newer refresh failed for another reason", async () => {
+    let landHint: (hint: string | null) => void = () => {};
+    jest.mocked(checkedLocalNetworkHint).mockImplementationOnce(() => new Promise((resolve) => (landHint = resolve)));
+    jest.mocked(listBots).mockRejectedValueOnce(networkError).mockRejectedValueOnce(new Error('GET /bots failed (502)'));
+    await render(<HomeScreen />);
+    expect(await screen.findByText('Network request failed')).toBeOnTheScreen();
+    await waitFor(() => expect(checkedLocalNetworkHint).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      fireEvent(screen.getByTestId('roster'), 'refresh');
+    });
+    expect(await screen.findByText('GET /bots failed (502)')).toBeOnTheScreen();
+    await act(async () => landHint(LOCAL_NETWORK_HINT));
+
+    expect(screen.queryByText(LOCAL_NETWORK_HINT)).toBeNull();
+  });
+
+  describe('with the real permission check on Android 17', () => {
+    const actual = jest.requireActual<typeof import('@mobile/lib/localNetwork')>('@mobile/lib/localNetwork');
+    function android17(holdsNearbyDevices: boolean) {
+      jest.replaceProperty(Platform, 'OS', 'android');
+      jest.spyOn(Platform, 'Version', 'get').mockReturnValue(37);
+      jest.mocked(checkedLocalNetworkHint).mockImplementation(actual.checkedLocalNetworkHint);
+      const request = jest.spyOn(PermissionsAndroid, 'request');
+      return { check: jest.spyOn(PermissionsAndroid, 'check').mockResolvedValue(holdsNearbyDevices), request };
+    }
+    afterEach(() => jest.restoreAllMocks());
+
+    it('shows no Nearby devices hint when the app holds the permission, checked without asking', async () => {
+      const { check, request } = android17(true);
+      jest.mocked(listBots).mockRejectedValue(networkError);
+      await render(<HomeScreen />);
+
+      expect(await screen.findByText('Network request failed')).toBeOnTheScreen();
+      await waitFor(() => expect(check).toHaveBeenCalled());
+      expect(screen.queryByText(LOCAL_NETWORK_HINT)).toBeNull();
+      expect(request).not.toHaveBeenCalled();
+    });
+
+    it('names Nearby devices when the app does not hold it', async () => {
+      android17(false);
+      jest.mocked(listBots).mockRejectedValue(networkError);
+      await render(<HomeScreen />);
+
+      expect(await screen.findByText(LOCAL_NETWORK_HINT)).toBeOnTheScreen();
+    });
   });
 
   it('shows no hint when the failure is not about the local network', async () => {
