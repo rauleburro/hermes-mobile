@@ -36,6 +36,12 @@ async function requireConfig(): Promise<BffConfig> {
  * (Android's OkHttp client is built without one), so a request on a half-open socket would hang.
  */
 export const REQUEST_TIMEOUT_MS = 15_000;
+/**
+ * The full Bot Chat history: up to 500 rows, with tool output ~3 KB a row (~1.5 MB). Measured
+ * ~7.6 s at 200 KB/s and ~30 s at 50 KB/s, so a slow mobile link needs more than the default.
+ * A dead BFF is still caught at REQUEST_TIMEOUT_MS by the Bot Chat lookup that runs first.
+ */
+export const HISTORY_TIMEOUT_MS = 45_000;
 
 type Deadline = {
   ms: number;
@@ -73,12 +79,17 @@ function withDeadline<T>({ ms, signal: outer, onTimeout, onAbort }: Deadline, wo
  * it reads as "Offline" next to saved data and is retried as transient. `init.signal` still
  * aborts the request (BffError code `aborted`).
  */
-async function request<T>(path: string, init: RequestInit = {}, config?: BffConfig): Promise<T> {
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+  config?: BffConfig,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<T> {
   const { url, token } = config ?? (await requireConfig());
   const { signal: callerSignal, ...rest } = init;
   const method = init.method ?? 'GET';
   const deadline: Deadline = {
-    ms: REQUEST_TIMEOUT_MS,
+    ms: timeoutMs,
     signal: callerSignal,
     onTimeout: () => new BffError(`${method} ${path} timed out`, undefined, 'timeout'),
     onAbort: () => new BffError(`${method} ${path} aborted`, undefined, 'aborted'),
@@ -111,6 +122,9 @@ export const getBotChat = (botId: string) => request<BotChatResponse>(`${bot(bot
 export const getBotMessages = (botId: string, sessionId: string) =>
   request<{ data: SessionMessage[] }>(
     `/sessions/${encodeURIComponent(sessionId)}/messages?bot=${encodeURIComponent(botId)}`,
+    {},
+    undefined,
+    HISTORY_TIMEOUT_MS,
   ).then((r) => r.data);
 
 /** A page of the Bot's Bot Chat (the BFF resolves it). Rows are chronological in both orders. */

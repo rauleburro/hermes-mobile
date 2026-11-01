@@ -7,6 +7,7 @@ import {
   getBotChat,
   getBotChatMessages,
   getBotMessages,
+  HISTORY_TIMEOUT_MS,
   listBots,
   REQUEST_TIMEOUT_MS,
   SSE_IDLE_TIMEOUT_MS,
@@ -154,6 +155,20 @@ describe('request timeout', () => {
     await jest.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
 
     await expect(result).resolves.toMatchObject({ code: 'timeout' });
+  });
+
+  it('gives the full Bot Chat history (up to 500 rows, ~1.5 MB with tool output) a longer budget', async () => {
+    hang();
+    const result = getBotMessages('default', 'chat-1').catch((e: unknown) => e);
+    let settled = false;
+    result.then(() => (settled = true));
+
+    expect(HISTORY_TIMEOUT_MS).toBeGreaterThan(REQUEST_TIMEOUT_MS);
+    await jest.advanceTimersByTimeAsync(HISTORY_TIMEOUT_MS - 1);
+    expect(settled).toBe(false);
+    await jest.advanceTimersByTimeAsync(1);
+
+    await expect(result).resolves.toMatchObject({ code: 'timeout', status: undefined });
   });
 
   it('leaves no timer behind once the BFF answers', async () => {
