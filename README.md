@@ -58,6 +58,17 @@ Before opening a PR, commit your work and run `pnpm validate`: it runs all of th
 
 The hygiene check scans tracked files only. A line that legitimately mentions something it would flag (for example documentation about what not to commit) can carry the marker `hygiene-allow` to be skipped.
 
+### CI
+
+Validation has two layers. The first is local: `pnpm validate` and the receipt it stamps. The second is the GitHub Actions workflow in `.github/workflows/ci.yml`:
+
+- A pull request first runs a receipt job that checks, in seconds and without installing anything, that its head commit carries a `Validated-tree` trailer matching the commit's tree. If the receipt is missing or stale, that job fails and the full CI never starts. Draft PRs are skipped until they are marked ready for review.
+- With a valid receipt, the full CI runs the same steps as `pnpm validate` (install with the frozen lockfile, tests, typecheck, lint, hygiene).
+- The full CI always runs on `main`, with no receipt needed, since squash-merged commits don't carry one.
+- For pull requests from first-time outside contributors, GitHub holds the workflow run until a maintainer approves it ([details](https://docs.github.com/en/actions/managing-workflow-runs-and-deployments/managing-workflow-runs/approving-workflow-runs-from-public-forks)).
+
+A receipt is a convenience, not proof: anyone can forge the trailer by hand. That is why the full CI is the backstop for every PR that passes the receipt check, and why it runs again on `main`.
+
 ## Testing
 
 Tests live under `tests/<area>`, not next to the code they test:
