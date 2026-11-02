@@ -1,5 +1,5 @@
 import type { BotSummary, BotsResponse } from '@hermes-mobile/api';
-import { router, Stack, useFocusEffect, useTheme } from 'expo-router';
+import { router, Stack, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, FlatList, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { BotAvatar } from '@/components/BotAvatar';
@@ -9,6 +9,7 @@ import { lastMessagePreview } from '@/lib/bots';
 import { bindCache, readRoster, savedDataHint, writeRoster } from '@/lib/cache';
 import { loadConfig, pairedUrl } from '@/lib/config';
 import { checkedLocalNetworkHint } from '@/lib/localNetwork';
+import { typography, useTheme } from '@/theme';
 
 const NO_BOT_CHAT = 'No Bot Chat yet';
 
@@ -140,20 +141,20 @@ export default function HomeScreen() {
         onPress={() => router.push({ pathname: '/bot/[botId]', params: { botId: item.id, name: item.name } })}
         style={({ pressed }) => [
           styles.row,
-          { borderColor: colors.border, opacity: !item.reachable ? 0.45 : pressed ? 0.6 : 1 },
+          { borderColor: colors.separator, opacity: !item.reachable ? 0.45 : pressed ? 0.6 : 1 },
         ]}>
-        <BotAvatar name={item.name} />
+        <BotAvatar botId={item.id} name={item.name} />
         <View style={styles.rowText}>
           <Text style={[styles.name, { color: colors.text }]} numberOfLines={1}>
             {item.name}
           </Text>
           {item.title ? (
-            <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
+            <Text style={[styles.title, { color: colors.textSecondary }]} numberOfLines={1}>
               {item.title}
             </Text>
           ) : null}
           {subtitle ? (
-            <Text style={[styles.preview, { color: colors.text }]} numberOfLines={1}>
+            <Text style={[styles.preview, { color: colors.textSecondary }]} numberOfLines={1}>
               {subtitle}
             </Text>
           ) : null}
@@ -176,13 +177,13 @@ export default function HomeScreen() {
             {roster && error ? (
               // A roster is on screen (saved, or fresh from an earlier refresh): keep it, say why it may be old.
               <View style={styles.hintRow}>
-                <Text style={[styles.hint, styles.hintText, { color: colors.text }]}>{savedHint}</Text>
+                <Text style={[styles.hint, styles.hintText, { color: colors.textSecondary }]}>{savedHint}</Text>
                 <Button title="Retry" onPress={refresh} />
               </View>
             ) : fromCache && loading ? (
-              <Text style={[styles.hint, { color: colors.text }]}>Updating…</Text>
+              <Text style={[styles.hint, { color: colors.textSecondary }]}>Updating…</Text>
             ) : error ? (
-              <Text style={[styles.error, { color: colors.notification }]}>{error}</Text>
+              <Text style={[styles.error, { color: colors.danger }]}>{error}</Text>
             ) : null}
             {error && networkHint ? (
               <View style={styles.networkHint}>
@@ -194,7 +195,7 @@ export default function HomeScreen() {
         }
         ListEmptyComponent={
           roster && !error ? (
-            <Text style={[styles.empty, { color: colors.text }]}>No Bots yet. Create one in Hermes Desktop (Bots tab).</Text>
+            <Text style={[styles.empty, { color: colors.textSecondary }]}>No Bots yet. Create one in Hermes Desktop (Bots tab).</Text>
           ) : undefined
         }
         renderItem={renderBot}
@@ -214,13 +215,13 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   rowText: { flex: 1, gap: 2 },
-  name: { fontSize: 16, fontWeight: '600' },
-  title: { fontSize: 13, opacity: 0.7 },
-  preview: { fontSize: 14, opacity: 0.6 },
-  empty: { textAlign: 'center', marginTop: 48, opacity: 0.6, paddingHorizontal: 24 },
+  name: { ...typography.headline },
+  title: { ...typography.footnote },
+  preview: { ...typography.callout },
+  empty: { ...typography.callout, textAlign: 'center', marginTop: 48, paddingHorizontal: 24 },
   error: { padding: 16 },
   networkHint: { paddingHorizontal: 16, paddingBottom: 12, gap: 8 },
   hintRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 16 },
   hintText: { flexShrink: 1 },
-  hint: { paddingHorizontal: 16, paddingVertical: 6, fontSize: 12, opacity: 0.6, textAlign: 'center' },
+  hint: { ...typography.footnote, paddingHorizontal: 16, paddingVertical: 6, textAlign: 'center' },
 });

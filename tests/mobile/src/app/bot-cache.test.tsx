@@ -9,7 +9,6 @@ import { loadConfig, pairedUrl } from '@mobile/lib/config';
 jest.mock('expo-router', () => ({
   Stack: { Screen: () => null },
   useLocalSearchParams: () => ({ botId: 'default', name: 'Hermes' }),
-  useTheme: () => ({ dark: false, colors: { text: 'black', border: 'gray', notification: 'red', card: 'white', primary: 'blue' } }),
   useFocusEffect: (effect: () => void | (() => void)) => jest.requireActual<typeof import('react')>('react').useEffect(effect, [effect]),
 }));
 jest.mock('expo-router/react-navigation', () => ({ useHeaderHeight: () => 0 }));

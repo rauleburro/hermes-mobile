@@ -1,17 +1,18 @@
 import { act, render, screen, userEvent, waitFor } from '@testing-library/react-native';
-import { Linking } from 'react-native';
+import * as ReactNative from 'react-native';
+import { Linking, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import PairScreen from '@mobile/app/pair';
 import { BffError, checkHealth } from '@mobile/lib/bff';
 import { loadConfig, saveConfig } from '@mobile/lib/config';
 import { ensureLocalNetworkAccess, LOCAL_NETWORK_HINT, localNetworkHint } from '@mobile/lib/localNetwork';
+import { colors } from '@mobile/theme';
 
-// The screen only needs a theme, the route params (the pairing link's query) and router.replace.
+// The screen only needs the route params (the pairing link's query) and router.replace.
 const mockParams = jest.fn((): Record<string, string | string[]> => ({}));
 jest.mock('expo-router', () => ({
   router: { replace: jest.fn() },
   useLocalSearchParams: () => mockParams(),
-  useTheme: () => ({ colors: { text: 'black', border: 'gray', notification: 'red' } }),
 }));
 // Network and secure storage are the screen's only side effects.
 jest.mock('@mobile/lib/bff', () => ({ BffError: jest.requireActual('@mobile/lib/bff').BffError, checkHealth: jest.fn() }));
@@ -46,6 +47,27 @@ async function fillForm(url: string, token: string) {
   await user.type(screen.getByPlaceholderText('from `pnpm pair`'), token);
   return user;
 }
+
+describe('PairScreen theme', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it.each(['light', 'dark'] as const)('themes the fields, their placeholders and the error (%s)', async (scheme) => {
+    jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue(scheme);
+    mockedCheckHealth.mockRejectedValue(new Error('timeout'));
+    await render(<PairScreen />);
+
+    for (const field of [urlField(), screen.getByPlaceholderText('from `pnpm pair`')]) {
+      expect(field).toHaveProp('placeholderTextColor', colors[scheme].textSecondary);
+      expect(StyleSheet.flatten(field.props.style)).toMatchObject({ color: colors[scheme].text, borderColor: colors[scheme].separator });
+    }
+    expect(StyleSheet.flatten(screen.getByText('BFF URL').props.style).color).toBe(colors[scheme].text);
+
+    const user = await fillForm('http://bff.local:8787', 'secret');
+    await user.press(screen.getByRole('button', { name: 'Pair' }));
+    const error = await screen.findByText('Could not reach the BFF: timeout');
+    expect(StyleSheet.flatten(error.props.style).color).toBe(colors[scheme].danger);
+  });
+});
 
 describe('PairScreen', () => {
   it('asks for the BFF URL and device token, and cannot pair until both are filled', async () => {

@@ -1,9 +1,25 @@
 import { render, screen, userEvent } from '@testing-library/react-native';
+import * as ReactNative from 'react-native';
+import { StyleSheet } from 'react-native';
 import { RESULT_PREVIEW_MAX, ToolCard } from '@mobile/components/ToolCard';
+import { colors } from '@mobile/theme';
 
-jest.mock('expo-router', () => ({
-  useTheme: () => ({ colors: { text: 'black', border: 'gray', card: 'white', primary: 'blue' } }),
-}));
+const styleOf = (node: { props: { style?: unknown } }) => StyleSheet.flatten(node.props.style as never) ?? {};
+
+afterEach(() => jest.restoreAllMocks());
+
+describe('ToolCard theme', () => {
+  it.each(['light', 'dark'] as const)('sits on the surface color with the %s theme text and accent spinner', async (scheme) => {
+    jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue(scheme);
+    await render(<ToolCard name="clock" args="tz: UTC" rawArgs="" status="running" />);
+
+    const card = screen.getByLabelText('Tool clock, tz: UTC, running');
+    expect(styleOf(card)).toMatchObject({ backgroundColor: colors[scheme].surface, borderColor: colors[scheme].separator });
+    expect(styleOf(screen.getByText('clock')).color).toBe(colors[scheme].text);
+    expect(styleOf(screen.getByText('tz: UTC')).color).toBe(colors[scheme].textSecondary);
+    expect(screen.getByTestId('tool-spinner')).toHaveProp('color', colors[scheme].accent);
+  });
+});
 
 describe('ToolCard', () => {
   it('shows the tool name, the args summary and a spinner while running, all in its label', async () => {

@@ -1,7 +1,7 @@
-import { useTheme } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { truncate, type ToolStatus } from '@/lib/chatItems';
+import { typography, useTheme } from '@/theme';
 
 /** Characters of a tool result shown when a card is expanded. */
 export const RESULT_PREVIEW_MAX = 600;
@@ -32,23 +32,23 @@ export function ToolCard({ name, args, rawArgs, status, result }: Props) {
   const headerRow = (
     <View style={styles.row}>
       {status === 'running' ? (
-        <ActivityIndicator testID="tool-spinner" size="small" color={colors.primary} />
+        <ActivityIndicator testID="tool-spinner" size="small" color={colors.accent} />
       ) : (
-        <Text style={[styles.icon, { color: colors.text }]}>{status === 'done' ? (expanded ? '▾' : '▸') : '·'}</Text>
+        <Text style={[styles.icon, { color: colors.textSecondary }]}>{status === 'done' ? (expanded ? '▾' : '▸') : '·'}</Text>
       )}
       <Text style={[styles.name, { color: colors.text }]} numberOfLines={1}>
         {name}
       </Text>
       {args ? (
-        <Text style={[styles.args, { color: colors.text }]} numberOfLines={1}>
+        <Text style={[styles.args, { color: colors.textSecondary }]} numberOfLines={1}>
           {args}
         </Text>
       ) : null}
-      {status !== 'done' ? <Text style={[styles.state, { color: colors.text }]}>{STATUS_TEXT[status]}</Text> : null}
+      {status !== 'done' ? <Text style={[styles.state, { color: colors.textSecondary }]}>{STATUS_TEXT[status]}</Text> : null}
     </View>
   );
 
-  const cardStyle = [styles.card, { backgroundColor: colors.card, borderColor: colors.border }];
+  const cardStyle = [styles.card, { backgroundColor: colors.surface, borderColor: colors.separator }];
   if (status !== 'done') {
     return (
       <View accessible accessibilityLabel={label} style={cardStyle}>
@@ -66,7 +66,7 @@ export function ToolCard({ name, args, rawArgs, status, result }: Props) {
         {headerRow}
       </Pressable>
       {expanded ? (
-        <View style={[styles.details, { borderColor: colors.border }]}>
+        <View style={[styles.details, { borderColor: colors.separator }]}>
           {rawArgs ? (
             <Text testID="tool-args" selectable style={[styles.detail, { color: colors.text }]}>
               {truncate(rawArgs, ARGS_PREVIEW_MAX)}
@@ -84,10 +84,10 @@ export function ToolCard({ name, args, rawArgs, status, result }: Props) {
 const styles = StyleSheet.create({
   card: { alignSelf: 'flex-start', maxWidth: '85%', borderRadius: 10, borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: 10, paddingVertical: 6 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  icon: { width: 14, textAlign: 'center', opacity: 0.6 },
-  name: { fontSize: 13, fontWeight: '600', fontFamily: 'monospace' },
-  args: { flexShrink: 1, fontSize: 12, opacity: 0.6, fontFamily: 'monospace' },
-  state: { fontSize: 12, opacity: 0.6 },
+  icon: { width: 14, textAlign: 'center' },
+  name: { ...typography.mono, fontWeight: '600' },
+  args: { ...typography.footnote, flexShrink: 1, fontFamily: typography.mono.fontFamily },
+  state: { ...typography.footnote },
   details: { marginTop: 6, paddingTop: 6, gap: 6, borderTopWidth: StyleSheet.hairlineWidth },
-  detail: { fontSize: 12, fontFamily: 'monospace', opacity: 0.85 },
+  detail: { ...typography.footnote, fontFamily: typography.mono.fontFamily },
 });

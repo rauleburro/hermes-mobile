@@ -1,5 +1,6 @@
 import type { BotSummary, BotsResponse, SessionMessage } from '@hermes-mobile/api';
 import { act, fireEvent, render, screen, userEvent, waitFor } from '@testing-library/react-native';
+import * as ReactNative from 'react-native';
 import { Linking, PermissionsAndroid, Platform, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import HomeScreen from '@mobile/app/index';
@@ -7,6 +8,7 @@ import { BffError, getBotChat, getBotMessages, listBots } from '@mobile/lib/bff'
 import { bindCache, cacheStorage, readRoster, writeRoster } from '@mobile/lib/cache';
 import { loadConfig, pairedUrl } from '@mobile/lib/config';
 import { checkedLocalNetworkHint, LOCAL_NETWORK_HINT } from '@mobile/lib/localNetwork';
+import { botHue, colors } from '@mobile/theme';
 
 jest.mock('expo-router', () => {
   const { useEffect } = jest.requireActual('react');
@@ -15,7 +17,6 @@ jest.mock('expo-router', () => {
     // Render the header's Pair button so tests can see it.
     Stack: { Screen: ({ options }: { options?: { headerLeft?: () => unknown } }) => options?.headerLeft?.() ?? null },
     useFocusEffect: (effect: () => void) => useEffect(effect, [effect]),
-    useTheme: () => ({ colors: { text: 'black', border: 'gray', notification: 'red', card: 'white', primary: 'blue' } }),
   };
 });
 jest.mock('@mobile/lib/bff', () => {
@@ -50,6 +51,38 @@ beforeEach(() => {
   jest.mocked(getBotChat).mockImplementation(async (botId) => ({ botId, sessionId: `chat-${botId}` }));
   jest.mocked(getBotMessages).mockResolvedValue([]);
   jest.mocked(checkedLocalNetworkHint).mockResolvedValue(null);
+});
+
+describe('HomeScreen theme', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it.each(['light', 'dark'] as const)('colors each avatar with its Bot hue and the texts from the %s theme', async (scheme) => {
+    jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue(scheme);
+    roster([
+      bot({ id: 'default', name: 'Hermes', title: 'Personal assistant' }),
+      bot({ id: 'researcher', name: 'Deep Researcher', title: 'Finds sources' }),
+    ]);
+    jest.mocked(getBotMessages).mockResolvedValue([{ role: 'assistant', content: 'pong' }]);
+    await render(<HomeScreen />);
+
+    const color = (text: string) => StyleSheet.flatten(screen.getByText(text).props.style).color;
+    expect(StyleSheet.flatten((await screen.findByText('HE')).parent!.props.style).backgroundColor).toBe(botHue('default').fill);
+    expect(StyleSheet.flatten(screen.getByText('DR').parent!.props.style).backgroundColor).toBe(botHue('researcher').fill);
+    expect(color('Hermes')).toBe(colors[scheme].text);
+    expect(color('Personal assistant')).toBe(colors[scheme].textSecondary);
+    expect((await screen.findAllByText('pong')).map((n) => StyleSheet.flatten(n.props.style).color)).toEqual([
+      colors[scheme].textSecondary,
+      colors[scheme].textSecondary,
+    ]);
+  });
+
+  it.each(['light', 'dark'] as const)('shows a failed refresh in the danger color (%s)', async (scheme) => {
+    jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue(scheme);
+    jest.mocked(listBots).mockRejectedValue(new Error('boom'));
+    await render(<HomeScreen />);
+
+    expect(StyleSheet.flatten((await screen.findByText('boom')).props.style).color).toBe(colors[scheme].danger);
+  });
 });
 
 describe('HomeScreen (Bots roster)', () => {

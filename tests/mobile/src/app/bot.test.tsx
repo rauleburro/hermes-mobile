@@ -1,5 +1,6 @@
 import type { RunEvent, SessionMessage } from '@hermes-mobile/api';
 import { act, fireEvent, render, screen, userEvent, waitFor } from '@testing-library/react-native';
+import * as ReactNative from 'react-native';
 import { Alert, DeviceEventEmitter, Platform, StyleSheet } from 'react-native';
 import BotChatScreen from '@mobile/app/bot/[botId]';
 import {
@@ -13,18 +14,15 @@ import {
   stopBotRun,
 } from '@mobile/lib/bff';
 import { buildChatItems } from '@mobile/lib/chatItems';
-import { placeholderColor } from '@mobile/lib/theme';
+import { botHue, colors } from '@mobile/theme';
 import { TURN_POLL_MAX_INTERVAL_MS, TURN_POLL_MAX_MS, TURN_POLL_MS } from '@mobile/lib/useTurnPolling';
 
-let mockTheme = {
-  dark: false,
-  colors: { text: 'black', border: 'gray', notification: 'red', card: 'white', primary: 'blue', background: 'white' },
-};
+// Which Bot's chat is open; a test can open another one.
+let mockBotId = 'default';
 jest.mock('expo-router', () => ({
   // Render the header's Stop button so tests can press it.
   Stack: { Screen: ({ options }: { options?: { headerRight?: () => unknown } }) => options?.headerRight?.() ?? null },
-  useLocalSearchParams: () => ({ botId: 'default', name: 'Hermes' }),
-  useTheme: () => mockTheme,
+  useLocalSearchParams: () => ({ botId: mockBotId, name: 'Hermes' }),
   // Always focused here; focus and blur handling is covered by the useTurnPolling tests.
   useFocusEffect: (effect: () => void | (() => void)) => jest.requireActual<typeof import('react')>('react').useEffect(effect, [effect]),
 }));
@@ -69,6 +67,7 @@ function controllableRun() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockBotId = 'default';
   mockUuid = 0;
   jest.mocked(getBotChat).mockResolvedValue({ botId: 'default', sessionId: 'chat-default' });
   jest.mocked(getBotMessages).mockResolvedValue([
@@ -86,6 +85,8 @@ async function send(text: string) {
   await user.type(await screen.findByPlaceholderText('Message Hermes'), text);
   await user.press(screen.getByRole('button', { name: 'Send' }));
 }
+
+afterEach(() => jest.restoreAllMocks());
 
 describe('BotChatScreen', () => {
   it("shows the Bot Chat history (user and assistant lines only) from the Bot's profile", async () => {
@@ -205,6 +206,28 @@ describe('BotChatScreen', () => {
     await userEvent.setup().press(await screen.findByRole('button', { name: 'Stop' }));
 
     expect(stopBotRun).toHaveBeenCalledWith('default', 'run-1');
+  });
+
+  it.each(['light', 'dark'] as const)('draws Stop in the danger color (%s)', async (scheme) => {
+    jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue(scheme);
+    controllableRun();
+    await render(<BotChatScreen />);
+    await send('[e2e] ping');
+
+    const stop = await screen.findByRole('button', { name: 'Stop' });
+    expect(StyleSheet.flatten(screen.getByText('Stop').props.style).color).toBe(colors[scheme].danger);
+    expect(stop).toBeOnTheScreen();
+  });
+
+  it.each(['light', 'dark'] as const)('colors the chat bubbles in the %s scheme: the Bot hue for you, the surface for the Bot', async (scheme) => {
+    jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue(scheme);
+    mockBotId = ['research-bot', 'writer', 'ops'].find((id) => botHue(id).fill !== botHue('default').fill)!;
+    await render(<BotChatScreen />);
+
+    const you = await screen.findByLabelText('You: earlier question');
+    expect(StyleSheet.flatten(you.props.style).backgroundColor).toBe(botHue(mockBotId).fill);
+    const bot = screen.getByLabelText('Bot: earlier answer');
+    expect(StyleSheet.flatten(bot.props.style).backgroundColor).toBe(colors[scheme].surface);
   });
 
   it('keeps the composer usable and reports a send that the BFF rejected', async () => {
@@ -758,11 +781,13 @@ describe('BotChatScreen tool cards', () => {
 });
 
 describe('BotChatScreen composer', () => {
-  it.each([false, true])('themes the placeholder color (dark: %s)', async (dark) => {
-    mockTheme = { ...mockTheme, dark };
+  it.each(['light', 'dark'] as const)('themes the placeholder color (%s)', async (scheme) => {
+    jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue(scheme);
     await render(<BotChatScreen />);
 
-    expect(await screen.findByPlaceholderText('Message Hermes')).toHaveProp('placeholderTextColor', placeholderColor({ dark }));
+    const input = await screen.findByPlaceholderText('Message Hermes');
+    expect(input).toHaveProp('placeholderTextColor', colors[scheme].textSecondary) // the theme's placeholder is the secondary text role;
+    expect(StyleSheet.flatten(input.props.style)).toMatchObject({ color: colors[scheme].text, borderColor: colors[scheme].separator });
   });
 
   it.each([

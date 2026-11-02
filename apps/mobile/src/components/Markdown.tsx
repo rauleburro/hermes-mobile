@@ -1,18 +1,25 @@
-import { useTheme } from 'expo-router';
 import type { Token, Tokens } from 'marked';
 import { type ReactNode, useMemo } from 'react';
-import { type ColorValue, Linking, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { MAX_DEPTH, OPENABLE, parseMarkdown } from '@/lib/markdown';
+import { type ColorRoles, type TypeStyle, typography, useTheme } from '@/theme';
 
 // Renders an assistant reply written in Markdown with plain React Native components.
 // `marked` only tokenizes; rendering is ours, so raw HTML is never interpreted: HTML
 // tokens are shown as the literal text the agent wrote. Images are never loaded
 // (only their alt text is shown), so a reply cannot make the phone fetch a URL.
 
-const MONO = Platform.select({ ios: 'Menlo', default: 'monospace' });
-const HEADING_SIZES = [26, 22, 19, 17, 16, 15];
+/** Heading levels 1 to 6 on the type scale. */
+const HEADING_STYLES: TypeStyle[] = [
+  typography.largeTitle,
+  typography.title,
+  typography.headline,
+  typography.headline,
+  typography.callout,
+  typography.callout,
+];
 
-type Colors = { text: ColorValue; border: ColorValue; primary: ColorValue };
+type Colors = Pick<ColorRoles, 'text' | 'separator' | 'elevated' | 'accent'>;
 
 /**
  * Renders `children` as Markdown. Pass `tokens` when the caller already parsed it with
@@ -55,9 +62,9 @@ function renderBlock(token: Token, colors: Colors, key: string, depth: number): 
       return null;
     case 'heading': {
       const t = token as Tokens.Heading;
-      const fontSize = HEADING_SIZES[t.depth - 1] ?? 15;
+      const { fontSize, lineHeight } = HEADING_STYLES[t.depth - 1] ?? typography.callout;
       return (
-        <Text key={key} selectable accessibilityRole="header" style={[styles.heading, text, { fontSize }]}>
+        <Text key={key} selectable accessibilityRole="header" style={[styles.heading, text, { fontSize, lineHeight }]}>
           {renderInline(t.tokens, colors, key)}
         </Text>
       );
@@ -90,7 +97,7 @@ function renderBlock(token: Token, colors: Colors, key: string, depth: number): 
       if (depth >= MAX_DEPTH) return plainBlock(token.raw, colors, key);
       const t = token as Tokens.Blockquote;
       return (
-        <View key={key} testID="markdown-blockquote" style={[styles.blockquote, { borderLeftColor: colors.border }]}>
+        <View key={key} testID="markdown-blockquote" style={[styles.blockquote, { borderLeftColor: colors.separator }]}>
           {renderBlocks(t.tokens, colors, key, depth + 1)}
         </View>
       );
@@ -102,7 +109,7 @@ function renderBlock(token: Token, colors: Colors, key: string, depth: number): 
           key={key}
           testID="markdown-code-block"
           horizontal
-          style={[styles.codeBlock, { backgroundColor: colors.border }]}
+          style={[styles.codeBlock, { backgroundColor: colors.elevated }]}
           contentContainerStyle={styles.codeBlockContent}>
           <Text selectable style={[styles.code, text]}>
             {t.text}
@@ -111,7 +118,7 @@ function renderBlock(token: Token, colors: Colors, key: string, depth: number): 
       );
     }
     case 'hr':
-      return <View key={key} testID="markdown-hr" style={[styles.hr, { backgroundColor: colors.border }]} />;
+      return <View key={key} testID="markdown-hr" style={[styles.hr, { backgroundColor: colors.separator }]} />;
     default:
       // Raw HTML blocks, tables and anything else: show the source text as written.
       return plainBlock(('text' in token && typeof token.text === 'string' ? token.text : token.raw) ?? '', colors, key);
@@ -147,7 +154,7 @@ function renderInline(tokens: Token[], colors: Colors, prefix: string): ReactNod
         );
       case 'codespan':
         return (
-          <Text key={key} style={[styles.code, { backgroundColor: colors.border }]}>
+          <Text key={key} style={[styles.code, { backgroundColor: colors.elevated }]}>
             {(token as Tokens.Codespan).text}
           </Text>
         );
@@ -159,7 +166,7 @@ function renderInline(tokens: Token[], colors: Colors, prefix: string): ReactNod
           <Text
             key={key}
             accessibilityRole="link"
-            style={[styles.link, { color: colors.primary }]}
+            style={[styles.link, { color: colors.accent }]}
             onPress={() => {
               Linking.openURL(t.href).catch(() => {});
             }}>
@@ -187,12 +194,12 @@ function renderInline(tokens: Token[], colors: Colors, prefix: string): ReactNod
 const styles = StyleSheet.create({
   root: { gap: 8 },
   heading: { fontWeight: 'bold' },
-  paragraph: { fontSize: 16, lineHeight: 22 },
+  paragraph: { ...typography.body },
   strong: { fontWeight: 'bold' },
   em: { fontStyle: 'italic' },
   del: { textDecorationLine: 'line-through' },
   link: { textDecorationLine: 'underline' },
-  code: { fontFamily: MONO, fontSize: 14 },
+  code: { ...typography.mono },
   // A horizontal ScrollView grows to fill its column parent unless told not to.
   codeBlock: { borderRadius: 8, flexGrow: 0 },
   codeBlockContent: { padding: 10 },
