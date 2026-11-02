@@ -20,7 +20,7 @@ Only the latest commit on `main` is supported. There are no maintained release b
 
 ## Deployment guidance
 
-- **Never expose the BFF to the public internet.** The device token is the only gate in front of it: anyone who has it can read and write your Bot Chats and approve tools. Run the BFF on your LAN or a private network such as Tailscale, or reach it over USB with `adb reverse`, and keep `BFF_HOST` as narrow as you can (`127.0.0.1` when using `adb reverse`).
+- **Never expose the BFF to the public internet.** The device token is the only gate in front of it: anyone who has it can read and write your Bot Chats and approve tools. Run the BFF on your LAN or a private network such as Tailscale, or reach it over USB with `adb reverse`, and keep `BFF_HOST` as narrow as you can: a comma-separated list such as `127.0.0.1,<tailscale-ip>` (one listener per address), or `127.0.0.1` alone with `adb reverse`. Leaving it unset listens on every interface (`0.0.0.0`), which you should avoid on a shared network.
 - Treat the device token like a password. It is stored in `services/bff/.env` (never committed) and in the phone's secure storage. If it leaks, run `pnpm pair --rotate` and restart the BFF.
 - The Hermes API key lives only in the BFF environment (`HERMES_API_KEY`, its copy of Hermes' `API_SERVER_KEY`, plus any `HERMES_PROFILE_KEY_*`) and never reaches the phone.
 - Don't paste pairing links, QR codes, tokens or `.env` contents into issues or screenshots: a pairing link contains the device token.

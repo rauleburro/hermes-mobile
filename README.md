@@ -30,9 +30,9 @@ Requires Node 24 (`nvm use`), pnpm and a running Hermes Agent with Bot Mode enab
    pnpm install
    cp services/bff/.env.example services/bff/.env   # set HERMES_API_KEY = API_SERVER_KEY
    pnpm pair                                         # generates DEVICE_TOKEN and prints the URL + QR
-   pnpm bff                                          # http://0.0.0.0:8787
+   pnpm bff                                          # http://127.0.0.1:8787
    ```
-   Keep the BFF on your LAN or a private network (e.g. Tailscale). Never expose it to the public internet.
+   Keep the BFF on a private network (e.g. Tailscale). Never expose it to the public internet. `BFF_HOST` takes a comma-separated list (for example `127.0.0.1,<tailscale-ip>`, from `tailscale ip -4`): the BFF listens only on those addresses, and unset means every interface (`0.0.0.0`).
 3. **Run the app:** build and install the development build once (`cd apps/mobile && npx expo run:android`), then `pnpm mobile` starts Metro for it. Open the pairing link from `pnpm pair` (scan the QR code, or send it with `adb` over USB) and tap **Pair**.
    - The phone must reach the BFF: over USB with `adb reverse` and `pnpm pair --url http://localhost:8787`, or on the same LAN or Tailscale network.
    - Step-by-step guide, including troubleshooting: [Run on an Android phone](apps/mobile/README.md#run-on-an-android-phone).
