@@ -25,6 +25,27 @@ describe('botHue', () => {
     expect(names.size).toBeGreaterThanOrEqual(4);
   });
 
+  it('keeps the hue of known ids stable across releases (a hash change would recolor every Bot)', () => {
+    expect(botHue('research-bot').name).toBe('orange');
+    expect(botHue('writer').name).toBe('orange');
+    expect(botHue('ops').name).toBe('rose');
+    expect(botHue('coder').name).toBe('sky');
+  });
+
+  it('never gives a Bot other than the primary the primary indigo', () => {
+    for (let i = 0; i < 5_000; i++) expect(botHue(`bot-${i}`).name).not.toBe('indigo');
+  });
+
+  it('reaches every other hue, spread roughly evenly', () => {
+    const counts = new Map<string, number>();
+    for (let i = 0; i < 7_000; i++) {
+      const name = botHue(`bot-${i}`).name;
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    expect([...counts.keys()].sort()).toEqual(BOT_HUE_NAMES.filter((n) => n !== 'indigo').sort());
+    for (const count of counts.values()) expect(count).toBeGreaterThan(700); // 1000 each if perfectly even
+  });
+
   it('keeps white text readable on every fill', () => {
     for (const name of BOT_HUE_NAMES) {
       const id = findIdFor(name);
@@ -41,8 +62,9 @@ describe('botHue', () => {
   });
 });
 
-/** Finds an id that maps to the given hue (all 8 must be reachable). */
+/** Finds an id that maps to the given hue: `default` for indigo, a probe id for every other hue. */
 function findIdFor(name: string): string {
+  if (name === 'indigo') return 'default';
   for (let i = 0; i < 10_000; i++) {
     if (botHue(`probe-${i}`).name === name) return `probe-${i}`;
   }

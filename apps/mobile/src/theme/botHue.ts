@@ -21,7 +21,7 @@ const FILLS: Record<BotHueName, string> = {
   sky: '#0369A1',
 };
 
-/** Order matters: the hash indexes into it. */
+/** Order matters: the hash indexes into the hues after `indigo`. */
 export const BOT_HUE_NAMES: BotHueName[] = ['indigo', 'teal', 'green', 'olive', 'orange', 'rose', 'violet', 'sky'];
 
 const TINT_ALPHA = '26';
@@ -37,9 +37,12 @@ function hash(value: string): number {
   return h;
 }
 
-/** The accent hue of a Bot. The primary Bot (`default`) is always indigo. */
+/** The hues other Bots draw from: indigo belongs to the primary Bot alone. */
+const OTHER_HUE_NAMES = BOT_HUE_NAMES.filter((name) => name !== 'indigo');
+
+/** The accent hue of a Bot. The primary Bot (`default`) is always indigo; no other Bot is. */
 export function botHue(botId: string): BotHue {
-  const name = botId === 'default' ? 'indigo' : BOT_HUE_NAMES[hash(botId) % BOT_HUE_NAMES.length]!;
+  const name = botId === 'default' ? 'indigo' : OTHER_HUE_NAMES[hash(botId) % OTHER_HUE_NAMES.length]!;
   const fill = FILLS[name];
   return { name, fill, onFill: ON_FILL, tint: `${fill}${TINT_ALPHA}` };
 }
