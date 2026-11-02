@@ -60,10 +60,10 @@ How the phone reaches the BFF:
 - **USB with `adb reverse` (development).** Keep `BFF_HOST=127.0.0.1` in `services/bff/.env`, then:
   ```
   adb reverse tcp:8787 tcp:8787
-  pnpm pair --url http://localhost:8787
+  pnpm pair
   ```
-  and scan the QR code. The `localhost` URL works on the phone because `adb reverse` forwards the port.
-- **LAN or Tailscale.** Set `BFF_HOST=0.0.0.0` (or the Tailscale address) so the BFF listens beyond localhost, then run `pnpm pair` (it uses the first LAN address) or `pnpm pair --url http://<bff-host>:8787` with your Tailscale name or IP, and scan the QR code. Keep the BFF on a private network; never expose it to the internet.
+  (with a loopback-only `BFF_HOST` the link uses `http://localhost:8787`, and `pnpm pair` prints the `adb reverse` command) and scan the QR code. The `localhost` URL works on the phone because `adb reverse` forwards the port.
+- **LAN or Tailscale.** Set `BFF_HOST` to a list with loopback plus your Tailscale address, for example `BFF_HOST=127.0.0.1,<tailscale-ip>` (`tailscale ip -4` prints it), and restart the BFF: it listens only on those addresses. Add your LAN address to the list only if you accept that anyone on that network can reach the BFF; `0.0.0.0` (every interface) is also what you get when `BFF_HOST` is unset. Then run `pnpm pair`: the link uses the first address in the list that is not loopback (or the first LAN address if the list has `0.0.0.0`), and `pnpm pair --url http://<bff-host>:8787` overrides it (it warns if that address isn't in `BFF_HOST`). Scan the QR code. Keep the BFF on a private network; never expose it to the internet.
 
 **Without a camera (adb).** You can send the link from the computer. Two details matter:
 
@@ -83,7 +83,7 @@ Without a link, open the pair screen from **Pair** on the home screen and type t
 - **`Unsupported class file major version`** during the build: Gradle is running on a JDK that is too new. Point `JAVA_HOME` at JDK 17.
 - **`SDK location not found`**: set `ANDROID_HOME`, or create `android/local.properties` with `sdk.dir=<path to the SDK>`.
 - **The app shows "Unable to load script" or the server list is empty**: Metro is not running or the phone can't reach it. Run `adb reverse tcp:<metro-port> tcp:<metro-port>` again (it resets when the cable is unplugged or `adb` restarts).
-- **"Could not reach the BFF"** on Pair: from the phone's point of view the URL must work. With USB, check `adb reverse --list` includes the BFF port; on the LAN, check `BFF_HOST` is not `127.0.0.1` and the firewall allows the port. `curl http://localhost:<bff-port>/health` on the computer should return `{"ok":true,...}`.
+- **"Could not reach the BFF"** on Pair: from the phone's point of view the URL must work. With USB, check `adb reverse --list` includes the BFF port; on the LAN or Tailscale, add your LAN/Tailscale address to `BFF_HOST` (it must list the address the phone connects to; `127.0.0.1` alone only works with `adb reverse`), restart the BFF, and check the firewall allows the port. `curl http://localhost:<bff-port>/health` on the computer should return `{"ok":true,...}`.
 - **Requests to a LAN BFF time out after 15 s, and Metro hangs for about 2 minutes, then fails (Android 17)**: Android 17 blocks the local network (private addresses such as `192.168.x.x`, `10.x.x.x`, and `.local` names) for apps without the **Nearby devices** permission (`ACCESS_LOCAL_NETWORK`). Development builds ask for it at launch, and the app asks again before pairing to a local address. If it was denied, allow it in *Settings > Apps > (the app) > Permissions > Nearby devices*, or tap *Open settings* under the error. USB with `adb reverse` (`localhost`) is not affected.
 - **The pairing link opens the launcher instead of the pair screen**: the app was closed, so the development build doesn't know which Metro to load. Tap your server under *Recently opened* (the link is delivered once the bundle loads), or load Metro first (above) and open the link again.
 - **Start over**: `adb shell pm clear dev.rauleburro.hermesmobile` (your `APP_ANDROID_PACKAGE` in a fork) wipes the pairing and the development build's recent servers.
