@@ -11,17 +11,54 @@ const SRC = path.resolve(__dirname, '../../../../apps/mobile/src');
 const NAMED_COLORS =
   'aliceblue|antiquewhite|aqua|aquamarine|azure|beige|bisque|black|blanchedalmond|blue|blueviolet|brown|burlywood|cadetblue|chartreuse|chocolate|coral|cornflowerblue|cornsilk|crimson|cyan|darkblue|darkcyan|darkgoldenrod|darkgray|darkgrey|darkgreen|darkkhaki|darkmagenta|darkolivegreen|darkorange|darkorchid|darkred|darksalmon|darkseagreen|darkslateblue|darkslategray|darkslategrey|darkturquoise|darkviolet|deeppink|deepskyblue|dimgray|dimgrey|dodgerblue|firebrick|floralwhite|forestgreen|fuchsia|gainsboro|ghostwhite|gold|goldenrod|gray|grey|green|greenyellow|honeydew|hotpink|indianred|indigo|ivory|khaki|lavender|lavenderblush|lawngreen|lemonchiffon|lightblue|lightcoral|lightcyan|lightgoldenrodyellow|lightgray|lightgrey|lightgreen|lightpink|lightsalmon|lightseagreen|lightskyblue|lightslategray|lightslategrey|lightsteelblue|lightyellow|lime|limegreen|linen|magenta|maroon|mediumaquamarine|mediumblue|mediumorchid|mediumpurple|mediumseagreen|mediumslateblue|mediumspringgreen|mediumturquoise|mediumvioletred|midnightblue|mintcream|mistyrose|moccasin|navajowhite|navy|oldlace|olive|olivedrab|orange|orangered|orchid|palegoldenrod|palegreen|paleturquoise|palevioletred|papayawhip|peachpuff|peru|pink|plum|powderblue|purple|rebeccapurple|red|rosybrown|royalblue|saddlebrown|salmon|sandybrown|seagreen|seashell|sienna|silver|skyblue|slateblue|slategray|slategrey|snow|springgreen|steelblue|tan|teal|thistle|tomato|turquoise|violet|wheat|white|whitesmoke|yellow|yellowgreen';
 
-type Rule = { name: string; pattern: RegExp };
+type Match = { index: number; text: string };
+type Rule = { name: string; find: (code: string) => Match[] };
+
+const matchesOf = (pattern: RegExp) => (code: string): Match[] =>
+  [...code.matchAll(pattern)].map((m) => ({ index: m.index!, text: m[0] }));
+
+// A color prop's value runs to the next `,` `}` `;` or newline, so a literal in a ternary or `??` branch counts.
+const VALUE = '[^,};\\n]*?';
+
+// Modules whose `useTheme` is the navigation theme, not ours.
+const NAV_MODULE = `(?:expo-router(?:/[^'"]*)?|@react-navigation/[^'"]*)`;
+const USE_THEME = String.raw`\buseTheme\b`;
+
+/** `import * as X from <nav module>` or `const X = require(<nav module>)`, then `X.useTheme`. */
+function namespaceUseTheme(code: string): Match[] {
+  const aliases = [
+    ...code.matchAll(new RegExp(String.raw`import\s*\*\s*as\s+(\w+)\s+from\s*(['"])${NAV_MODULE}\2`, 'g')),
+    ...code.matchAll(new RegExp(String.raw`(?:const|let|var)\s+(\w+)\s*=\s*require\(\s*(['"])${NAV_MODULE}\2\s*\)\s*(?:;|$)`, 'gm')),
+  ].map((m) => m[1]!);
+  return aliases.flatMap((alias) => matchesOf(new RegExp(String.raw`\b${alias}\s*\.\s*useTheme\b`, 'g'))(code));
+}
 
 const RULES: Rule[] = [
   // '#fff', "#d33", `#1B1D22`, '#11223344': a quoted hex color (3, 4, 6 or 8 digits), not a URL or a bare '#'.
-  { name: 'hex color', pattern: /(['"`])#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})\1/g },
-  { name: 'rgb()/rgba() color', pattern: /\brgba?\(/g },
-  { name: 'hsl()/hsla()/hwb() color', pattern: /\b(?:hsla?|hwb)\(/g },
-  // color: 'white', backgroundColor: "red", <Button color="red" />, placeholderTextColor={'gray'}
-  { name: 'named color', pattern: new RegExp(`\\b\\w*[cC]olor\\w*\\s*[:=]\\s*\\{?\\s*(['"])(?:${NAMED_COLORS})\\1`, 'gi') },
-  { name: 'literal fontSize', pattern: /\bfontSize\s*:\s*\d/g },
-  { name: "useTheme from 'expo-router'", pattern: /import\s*(?:type\s*)?\{[^}]*\buseTheme\b[^}]*\}\s*from\s*(['"])expo-router(?:\/[^'"]*)?\1/g },
+  { name: 'hex color', find: matchesOf(/(['"`])#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})\1/g) },
+  { name: 'rgb()/rgba() color', find: matchesOf(/\brgba?\(/g) },
+  { name: 'hsl()/hsla()/hwb() color', find: matchesOf(/\b(?:hsla?|hwb)\(/g) },
+  // color: 'white', backgroundColor: x ?? "red", <Button color="red" />, color={dark ? 'white' : 'black'}
+  {
+    name: 'named color',
+    find: matchesOf(new RegExp(String.raw`\b\w*[cC]olor\w*\s*[:=]${VALUE}(['"])(?:${NAMED_COLORS})\1`, 'gi')),
+  },
+  // fontSize: 16, fontSize: big ? 18 : 14, fontSize: size ?? 14 (a number in arithmetic, like `size * 0.38`, is computed)
+  {
+    name: 'literal fontSize',
+    find: matchesOf(/\bfontSize\s*:(?:[^,};\n]*[?:]|[^,};\n]*(?:&&|\|\|))?\s*\(*\s*\d/g),
+  },
+  {
+    name: "useTheme from 'expo-router'",
+    find: (code) => [
+      // import { useTheme } from 'expo-router', export { useTheme } from '@react-navigation/native'
+      ...matchesOf(new RegExp(String.raw`(?:import|export)\s*(?:type\s*)?\{[^}]*${USE_THEME}[^}]*\}\s*from\s*(['"])${NAV_MODULE}\1`, 'g'))(code),
+      // const { useTheme } = require('expo-router'), require('expo-router').useTheme
+      ...matchesOf(new RegExp(String.raw`\{[^}]*${USE_THEME}[^}]*\}\s*=\s*require\(\s*(['"])${NAV_MODULE}\1\s*\)`, 'g'))(code),
+      ...matchesOf(new RegExp(String.raw`require\(\s*(['"])${NAV_MODULE}\1\s*\)\s*\.\s*useTheme\b`, 'g'))(code),
+      ...namespaceUseTheme(code),
+    ],
+  },
 ];
 
 /** Drops whole-line comments so a note mentioning a color is not an offender. */
@@ -35,10 +72,10 @@ function withoutComments(source: string) {
 function findOffenders(file: string, source: string) {
   const code = withoutComments(source);
   const found: string[] = [];
-  for (const { name, pattern } of RULES) {
-    for (const match of code.matchAll(pattern)) {
+  for (const { name, find } of RULES) {
+    for (const match of find(code)) {
       const line = code.slice(0, match.index).split('\n').length;
-      found.push(`${file}:${line}  ${name}: ${match[0].replace(/\s+/g, ' ').slice(0, 60)}`);
+      found.push(`${file}:${line}  ${name}: ${match.text.replace(/\s+/g, ' ').slice(0, 60)}`);
     }
   }
   return found;
@@ -80,6 +117,27 @@ describe('findOffenders', () => {
     ['<Button color="navy" />', 'named color'],
     ["{ tintColor: 'teal' }", 'named color'],
     ["{ color: 'silver' }", 'named color'],
+    ["{ color: isUser ? 'white' : colors.text }", 'named color'],
+    ["{ color: isUser ? colors.text : 'white' }", 'named color'],
+    ["{ backgroundColor: x ?? 'black' }", 'named color'],
+    ["<ActivityIndicator color={dark ? 'white' : 'black'} />", 'named color'],
+    ['<Text style={{ borderColor: ok ? "teal" : colors.separator }} />', 'named color'],
+    ['{ fontSize: big ? 18 : 14 }', 'literal fontSize'],
+    ['{ fontSize: big ? typography.body.fontSize : 14 }', 'literal fontSize'],
+    ['{ fontSize: size ?? 14 }', 'literal fontSize'],
+    ['{ fontSize: size || 14 }', 'literal fontSize'],
+    ['{ fontSize: (16) }', 'literal fontSize'],
+    ["import * as Router from 'expo-router';\nconst t = Router.useTheme();", "useTheme from 'expo-router'"],
+    ["import * as Nav from 'expo-router/react-navigation';\nNav.useTheme()", "useTheme from 'expo-router'"],
+    ["const { useTheme } = require('expo-router');", "useTheme from 'expo-router'"],
+    ["const t = require('expo-router').useTheme();", "useTheme from 'expo-router'"],
+    ["const R = require('expo-router');\nR.useTheme();", "useTheme from 'expo-router'"],
+    ["import { useTheme } from '@react-navigation/native';", "useTheme from 'expo-router'"],
+    ["import { useTheme as useNavTheme } from '@react-navigation/native';", "useTheme from 'expo-router'"],
+    ["import { useTheme } from '@react-navigation/elements';", "useTheme from 'expo-router'"],
+    ["import * as Nav from '@react-navigation/native';\nNav.useTheme();", "useTheme from 'expo-router'"],
+    ["const { useTheme } = require('@react-navigation/native');", "useTheme from 'expo-router'"],
+    ["export { useTheme } from 'expo-router';", "useTheme from 'expo-router'"],
   ])('flags %j', (source, rule) => {
     expect(findOffenders('x.tsx', source).join('\n')).toContain(rule);
   });
@@ -90,6 +148,19 @@ describe('findOffenders', () => {
     "const md = '# Title';",
     "const id = '#abcde';",
     "{ color: colors.text }",
+    "{ color: colors.text, name: 'white' }",
+    "{ color: isUser ? hue.onFill : colors.text }",
+    "{ fontSize: big ? typography.body.fontSize : typography.callout.fontSize }",
+    "{ fontSize: scale(2) }",
+    "{ fontSize: Math.round(size * 0.38) }",
+    "{ fontSize: typography.body.fontSize, lineHeight: 24 }",
+    "import * as Router from 'expo-router';\nRouter.router.push('/');",
+    "import { router } from 'expo-router';\nconst useTheme = () => 1;",
+    "import * as Nav from '@react-navigation/native';\nNav.useNavigation();",
+    "import { useNavigation } from '@react-navigation/native';",
+    "const { router } = require('expo-router');",
+    "const x = require('./theme').useTheme;",
+    "import { useTheme } from '@react-navigation-kit/native';",
     "{ fontSize: size * 0.38 }",
     "{ fontSize: typography.body.fontSize }",
     "{ color: 'transparent' }",
