@@ -252,6 +252,27 @@ describe('BotChatScreen', () => {
     expect(StyleSheet.flatten(bot.props.style).backgroundColor).toBe(colors[scheme].surface);
   });
 
+  it.each(['light', 'dark'] as const)('draws the Working status in the secondary text color (%s)', async (scheme) => {
+    jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue(scheme);
+    controllableRun();
+    await render(<BotChatScreen />);
+    await send('[e2e] ping');
+
+    const status = await screen.findByText(/Working…/);
+    expect(StyleSheet.flatten(status.props.style).color).toBe(colors[scheme].textSecondary);
+  });
+
+  it.each(['light', 'dark'] as const)('draws the notice banner with the primary text and a separator border (%s)', async (scheme) => {
+    jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue(scheme);
+    jest.mocked(sendBotMessage).mockRejectedValue(new BffError('POST failed (409)', 409, 'bot_chat_missing'));
+    await render(<BotChatScreen />);
+    await send('[e2e] ping');
+
+    const notice = await screen.findByText(/Message not sent/);
+    expect(StyleSheet.flatten(notice.props.style).color).toBe(colors[scheme].text);
+    expect(StyleSheet.flatten(notice.parent!.props.style).borderColor).toBe(colors[scheme].separator);
+  });
+
   it('keeps the composer usable and reports a send that the BFF rejected', async () => {
     jest.mocked(sendBotMessage).mockRejectedValue(new BffError('POST failed (409)', 409, 'bot_chat_missing'));
     await render(<BotChatScreen />);

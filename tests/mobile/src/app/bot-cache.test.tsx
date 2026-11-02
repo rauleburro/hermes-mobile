@@ -1,10 +1,12 @@
 import type { BotChatResponse, RunEvent } from '@hermes-mobile/api';
 import { act, render, screen, userEvent, waitFor } from '@testing-library/react-native';
-import { AppState, type AppStateStatus } from 'react-native';
+import * as ReactNative from 'react-native';
+import { AppState, StyleSheet, type AppStateStatus } from 'react-native';
 import BotChatScreen from '@mobile/app/bot/[botId]';
 import { BffError, followBotRun, getBotChat, getBotChatMessages, getBotMessages, sendBotMessage } from '@mobile/lib/bff';
 import { bindCache, cacheStorage, readChat, writeChat } from '@mobile/lib/cache';
 import { loadConfig, pairedUrl } from '@mobile/lib/config';
+import { colors } from '@mobile/theme';
 
 jest.mock('expo-router', () => ({
   Stack: { Screen: () => null },
@@ -74,6 +76,20 @@ describe('BotChatScreen with the local cache', () => {
     expect(screen.getByText('saved answer')).toBeOnTheScreen();
     expect(screen.getByText('Updating…')).toBeOnTheScreen();
     expect(screen.queryByText('Loading…')).toBeNull();
+  });
+
+  it.each(['light', 'dark'] as const)('draws the Updating and offline hints in the secondary text color (%s)', async (scheme) => {
+    jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue(scheme);
+    savedChat();
+    jest.mocked(getBotChat).mockImplementation(never);
+    const { unmount } = await render(<BotChatScreen />);
+    expect(StyleSheet.flatten(screen.getByText('Updating…').props.style).color).toBe(colors[scheme].textSecondary);
+    await unmount();
+
+    jest.mocked(getBotChat).mockRejectedValue(new TypeError('Network request failed'));
+    await render(<BotChatScreen />);
+    const offline = await screen.findByText('Offline · showing saved messages');
+    expect(StyleSheet.flatten(offline.props.style).color).toBe(colors[scheme].textSecondary);
   });
 
   it('renders saved assistant replies as Markdown and keeps saved user lines literal, like the live chat', async () => {

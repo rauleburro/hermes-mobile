@@ -76,6 +76,31 @@ describe('HomeScreen theme', () => {
     ]);
   });
 
+  it.each(['light', 'dark'] as const)('draws the empty-roster message in the secondary text color (%s)', async (scheme) => {
+    jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue(scheme);
+    roster([]);
+    await render(<HomeScreen />);
+
+    const empty = await screen.findByText('No Bots yet. Create one in Hermes Desktop (Bots tab).');
+    expect(StyleSheet.flatten(empty.props.style).color).toBe(colors[scheme].textSecondary);
+  });
+
+  it.each(['light', 'dark'] as const)('draws the Updating and saved-data hints in the secondary text color (%s)', async (scheme) => {
+    jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue(scheme);
+    bindCache('http://bff.local:8787');
+    writeRoster('http://bff.local:8787', { botModeEnabled: true, bots: [bot({ id: 'default', name: 'Hermes' })] }, {});
+    jest.mocked(listBots).mockImplementation(() => new Promise<never>(() => {}));
+    const { unmount } = await render(<HomeScreen />);
+
+    expect(StyleSheet.flatten(screen.getByText('Updating…').props.style).color).toBe(colors[scheme].textSecondary);
+    await unmount();
+
+    jest.mocked(listBots).mockRejectedValue(new TypeError('Network request failed'));
+    await render(<HomeScreen />);
+    const offline = await screen.findByText('Offline · showing saved data');
+    expect(StyleSheet.flatten(offline.props.style).color).toBe(colors[scheme].textSecondary);
+  });
+
   it.each(['light', 'dark'] as const)('shows a failed refresh in the danger color (%s)', async (scheme) => {
     jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue(scheme);
     jest.mocked(listBots).mockRejectedValue(new Error('boom'));
