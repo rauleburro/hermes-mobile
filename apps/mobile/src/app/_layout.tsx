@@ -1,10 +1,10 @@
-import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
-import { useColorScheme } from 'react-native';
+import { Stack, ThemeProvider } from 'expo-router';
+import { navigationTheme, useTheme } from '@/theme';
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
+  const { scheme } = useTheme();
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+    <ThemeProvider value={navigationTheme(scheme)}>
       <Stack>
         <Stack.Screen name="index" options={{ title: 'Bots' }} />
         <Stack.Screen name="pair" options={{ title: 'Pair with BFF', presentation: 'modal' }} />
