@@ -34,6 +34,15 @@ export function loadConfig(): Config {
   };
 }
 
+// Lowercase `localhost`, canonicalise IPv6 (so `::1` and `0:0:0:0:0:0:0:1` compare equal); a zone id is kept.
+function canonicalHost(entry: string): string {
+  if (entry.toLowerCase() === 'localhost') return 'localhost';
+  if (isIP(entry) !== 6) return entry;
+  const [address = '', ...zone] = entry.split('%');
+  const canonical = new URL(`http://[${address}]`).hostname.slice(1, -1);
+  return zone.length ? `${canonical}%${zone.join('%')}` : canonical;
+}
+
 // BFF_HOST: comma-separated IPv4/IPv6 literals or `localhost`; one listener per address.
 // Unset (or only blanks) keeps the historical default, every IPv4 interface.
 export function parseHosts(raw: string | undefined): string[] {
@@ -46,7 +55,11 @@ export function parseHosts(raw: string | undefined): string[] {
       throw new Error(`BFF_HOST has an invalid entry "${entry}": use IPv4/IPv6 addresses or localhost, separated by commas`);
     }
   }
-  return entries.length ? [...new Set(entries)] : ['0.0.0.0'];
+  const hosts = [...new Set(entries.map(canonicalHost))];
+  if (hosts.includes('::') && hosts.includes('0.0.0.0')) {
+    throw new Error('BFF_HOST lists both "::" and "0.0.0.0": "::" already listens on IPv4 too (dual-stack), so keep only one of them');
+  }
+  return hosts.length ? hosts : ['0.0.0.0'];
 }
 
 // HERMES_PROFILE_KEY_<PROFILE>=<that profile's API_SERVER_KEY>, e.g. HERMES_PROFILE_KEY_RESEARCHER.

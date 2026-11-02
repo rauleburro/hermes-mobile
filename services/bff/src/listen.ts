@@ -13,7 +13,9 @@ type Options = {
   log?: (line: string) => void;
 };
 
-const urlHost = (address: string) => (address.includes(':') ? `[${address}]` : address);
+// Host part of a URL: IPv6 in brackets, a zone id escaped (`%` -> `%25`).
+export const urlHost = (address: string) => (address.includes(':') ? `[${address.replace('%', '%25')}]` : address);
+const hostPort = (address: string, port: number) => `${address.includes(':') ? `[${address}]` : address}:${port}`;
 
 function bind(server: ServerType, host: string, port: number): Promise<AddressInfo> {
   return new Promise((resolve, reject) => {
@@ -40,6 +42,7 @@ export async function listenAll({ fetch, hosts, port, log = console.log }: Optio
   const servers: ServerType[] = [];
   const addresses: Listeners['addresses'] = [];
   const close = async () => void (await Promise.all(servers.map(closeServer)));
+  const lines: string[] = [];
   let boundPort = port;
   for (const host of hosts) {
     const server = createAdaptorServer({ fetch, hostname: host });
@@ -48,12 +51,35 @@ export async function listenAll({ fetch, hosts, port, log = console.log }: Optio
       const info = await bind(server, host, boundPort);
       boundPort = info.port; // with port 0, later hosts reuse the port the first one got
       addresses.push({ address: info.address, port: info.port });
-      log(`hermes-bff listening on http://${urlHost(info.address)}:${info.port}`);
+      lines.push(`hermes-bff listening on http://${urlHost(info.address)}:${info.port}`);
     } catch (err) {
       await close();
       const reason = (err as NodeJS.ErrnoException).code ?? (err as Error).message;
-      throw new Error(`BFF cannot listen on ${host}:${boundPort} (${reason}); check BFF_HOST`, { cause: err });
+      throw new Error(`BFF cannot listen on ${hostPort(host, boundPort)} (${reason}); check BFF_HOST`, { cause: err });
     }
   }
+  lines.forEach((line) => log(line)); // only once every address is bound, so a rolled-back start logs nothing
   return { addresses, close };
+}
+
+type Signal = 'SIGINT' | 'SIGTERM';
+
+// On SIGINT/SIGTERM close every listener, then exit (0, or 1 if closing failed). Closes once only.
+export function onShutdown(
+  listeners: Pick<Listeners, 'close'>,
+  { on, exit }: { on: (signal: Signal, handler: () => void) => void; exit: (code: number) => void },
+): void {
+  let closing = false;
+  const shutdown = () => {
+    if (closing) return;
+    closing = true;
+    listeners.close().then(
+      () => exit(0),
+      (err) => {
+        console.error(err instanceof Error ? err.message : err);
+        exit(1);
+      },
+    );
+  };
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) on(signal, shutdown);
 }

@@ -1,10 +1,9 @@
 import { createConnection } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
-import { listenAll } from '../src/listen.ts';
+import { listenAll, onShutdown, urlHost } from '../src/listen.ts';
 
 const fetch = async (req: Request) => new Response(`ok ${new URL(req.url).pathname}`);
 const quiet = () => {};
-const urlHost = (h: string) => (h.includes(':') ? `[${h}]` : h);
 
 const canConnect = (host: string, port: number) =>
   new Promise<boolean>((resolve) => {
@@ -76,5 +75,71 @@ describe('listenAll', () => {
     await new Promise((r) => setTimeout(r, 100));
     await listeners.close();
     expect(await pending).toMatch(/ended|dropped/);
+  });
+});
+
+describe('listenAll messages', () => {
+  it('writes no "listening on" lines when a later address fails (the earlier ones are rolled back)', async () => {
+    const log = vi.fn();
+    await expect(listenAll({ fetch, hosts: ['127.0.0.1', '192.0.2.1'], port: 0, log })).rejects.toThrow();
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it('brackets an IPv6 address in the bind error', async () => {
+    // 2001:db8::/32 is the documentation range: never a local address (or IPv6 is unavailable); either way the bind fails.
+    await expect(listenAll({ fetch, hosts: ['2001:db8::1'], port: 0, log: quiet })).rejects.toThrow(/\[2001:db8::1\]:\d+/);
+  });
+});
+
+describe('urlHost', () => {
+  it('brackets IPv6 and escapes a zone id so the logged URL is valid', () => {
+    expect(urlHost('127.0.0.1')).toBe('127.0.0.1');
+    expect(urlHost('::1')).toBe('[::1]');
+    expect(urlHost('fe80::1%en0')).toBe('[fe80::1%25en0]');
+  });
+});
+
+describe('onShutdown', () => {
+  const setup = (close: () => Promise<void>) => {
+    const order: string[] = [];
+    const handlers = new Map<string, () => void>();
+    const closeSpy = vi.fn(async () => {
+      order.push('close:start');
+      await close();
+      order.push('close:done');
+    });
+    const exit = vi.fn((code: number) => void order.push(`exit:${code}`));
+    onShutdown({ close: closeSpy }, { on: (signal, handler) => void handlers.set(signal, handler), exit });
+    return { order, handlers, closeSpy, exit };
+  };
+  const settle = () => new Promise((r) => setTimeout(r, 10));
+
+  it('handles SIGINT and SIGTERM by closing the listeners and only then exiting 0', async () => {
+    for (const signal of ['SIGINT', 'SIGTERM']) {
+      const t = setup(() => new Promise((r) => setTimeout(r, 5)));
+      expect([...t.handlers.keys()].sort()).toEqual(['SIGINT', 'SIGTERM']);
+      t.handlers.get(signal)!();
+      expect(t.exit).not.toHaveBeenCalled();
+      await settle();
+      expect(t.order).toEqual(['close:start', 'close:done', 'exit:0']);
+    }
+  });
+
+  it('closes only once when both signals arrive', async () => {
+    const t = setup(async () => {});
+    t.handlers.get('SIGINT')!();
+    t.handlers.get('SIGTERM')!();
+    await settle();
+    expect(t.closeSpy).toHaveBeenCalledTimes(1);
+    expect(t.exit).toHaveBeenCalledTimes(1);
+  });
+
+  it('exits 1 when closing fails', async () => {
+    const t = setup(async () => {
+      throw new Error('boom');
+    });
+    t.handlers.get('SIGTERM')!();
+    await settle();
+    expect(t.exit).toHaveBeenCalledWith(1);
   });
 });

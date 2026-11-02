@@ -24,6 +24,24 @@ describe('parseHosts', () => {
     expect(parseHosts('127.0.0.1,100.64.0.10,127.0.0.1')).toEqual(['127.0.0.1', '100.64.0.10']);
   });
 
+  it('lowercases localhost and canonicalises IPv6 before comparing, so spelling variants are one address', () => {
+    expect(parseHosts('LocalHost')).toEqual(['localhost']);
+    expect(parseHosts('FD7A:115C:A1E0::1')).toEqual(['fd7a:115c:a1e0::1']);
+    expect(parseHosts('0:0:0:0:0:0:0:1')).toEqual(['::1']);
+    expect(parseHosts('localhost,LOCALHOST,::1,0:0:0:0:0:0:0:1,::01')).toEqual(['localhost', '::1']);
+  });
+
+  it('keeps a zone id on a link-local address', () => {
+    expect(parseHosts('FE80::1%en0')).toEqual(['fe80::1%en0']);
+  });
+
+  it('rejects "::" together with 0.0.0.0 because "::" already listens on IPv4 (dual-stack)', () => {
+    expect(() => parseHosts('0.0.0.0,::')).toThrow(/BFF_HOST.*"::".*"0\.0\.0\.0".*dual-stack/);
+    expect(() => parseHosts(':: , 0.0.0.0')).toThrow(/dual-stack/);
+    expect(() => parseHosts('0:0:0:0:0:0:0:0,0.0.0.0')).toThrow(/dual-stack/);
+    expect(parseHosts('::,127.0.0.1')).toEqual(['::', '127.0.0.1']);
+  });
+
   it.each(['example.com', '300.1.1.1', '127.0.0.1:8787', '[::1]', 'http://127.0.0.1'])(
     'rejects %s, naming the bad entry',
     (bad) => {

@@ -1,6 +1,6 @@
 import { createApp } from './app.ts';
 import { loadConfig } from './config.ts';
-import { listenAll } from './listen.ts';
+import { listenAll, onShutdown } from './listen.ts';
 import { readRoster } from './roster.ts';
 
 try {
@@ -9,11 +9,7 @@ try {
   const listeners = await listenAll({ fetch: app.fetch, hosts: config.hosts, port: config.port });
   console.log(`hermes-bff → ${config.hermesUrl}`);
 
-  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-    process.once(signal, () => {
-      void listeners.close().then(() => process.exit(0));
-    });
-  }
+  onShutdown(listeners, { on: (signal, handler) => process.once(signal, handler), exit: (code) => process.exit(code) });
 } catch (err) {
   console.error(err instanceof Error ? err.message : err);
   process.exit(1);
