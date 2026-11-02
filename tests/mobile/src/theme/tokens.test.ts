@@ -1,3 +1,4 @@
+import { BOT_HUE_NAMES, botHue } from '@mobile/theme/botHue';
 import { contrastRatio } from '@mobile/theme/contrast';
 import { colors, radius, sizes, spacing, typography } from '@mobile/theme/tokens';
 
@@ -48,6 +49,33 @@ describe.each(['light', 'dark'] as const)('contrast (%s)', (scheme) => {
 
   it('text on surface is at least 4.5', () => {
     expect(contrastRatio(c.text, c.surface)).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+// Every foreground/background pair the app draws (floor 4.5; no tertiary text is drawn).
+describe.each(['light', 'dark'] as const)('contrast of the pairs the app draws (%s)', (scheme) => {
+  const c = colors[scheme];
+  const roles = [
+    ['text', 'bg'],
+    ['textSecondary', 'bg'],
+    ['accent', 'bg'],
+    ['danger', 'bg'],
+    ['text', 'surface'], // assistant bubble, ToolCard, notice
+    ['textSecondary', 'surface'], // ToolCard name and state
+    ['accent', 'surface'], // ToolCard spinner
+    ['text', 'elevated'], // code
+    ['accent', 'elevated'], // link in code
+    ['onDangerFill', 'dangerFill'],
+    ['onAccentFill', 'accentFill'],
+  ] as const;
+
+  it.each(roles)('%s on %s is at least 4.5', (fg, bg) => {
+    expect(contrastRatio(c[fg], c[bg])).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it.each(BOT_HUE_NAMES)('the label on the %s hue fill is at least 4.5', (name) => {
+    const hue = [...Array(200).keys()].map((i) => botHue(`bot-${i}`)).concat(botHue('default')).find((h) => h.name === name)!;
+    expect(contrastRatio(hue.onFill, hue.fill)).toBeGreaterThanOrEqual(4.5);
   });
 });
 
