@@ -1,16 +1,16 @@
 import { fireEvent, render, screen, within } from '@testing-library/react-native';
+import * as ReactNative from 'react-native';
 import { Linking, Platform, StyleSheet } from 'react-native';
 import { Markdown } from '@mobile/components/Markdown';
 import { hasOpenableLinks as hasLinks, parseMarkdown } from '@mobile/lib/markdown';
+import { colors, typography } from '@mobile/theme';
 
-// The component reads its colors from the navigation theme. Each test can switch it.
-const LIGHT = { dark: false, colors: { text: 'rgb(28, 28, 30)', border: 'rgb(216, 216, 216)', primary: 'rgb(0, 122, 255)' } };
-const DARK = { dark: true, colors: { text: 'rgb(229, 229, 231)', border: 'rgb(39, 39, 41)', primary: 'rgb(10, 132, 255)' } };
-let mockTheme = LIGHT;
-jest.mock('expo-router', () => ({ useTheme: () => mockTheme }));
+// The component reads its colors from the app theme, which follows the system color scheme. Each test can switch it.
+let mockScheme: 'light' | 'dark' = 'light';
+jest.spyOn(ReactNative, 'useColorScheme').mockImplementation(() => mockScheme);
 
 beforeEach(() => {
-  mockTheme = LIGHT;
+  mockScheme = 'light';
   // Linking.openURL is already a jest.fn in the RN preset; clear its calls between tests.
   jest.clearAllMocks();
 });
@@ -67,6 +67,17 @@ describe('Markdown', () => {
 
     expect(styleOf(screen.getByText('pnpm test')).fontFamily).toBe(MONO);
     expect(screen.queryByText(/`/)).toBeNull();
+  });
+
+  it('keeps inline code to the mono face and size, so it inherits the weight and line height around it', async () => {
+    await render(<Markdown>{'# Heading with `code`\n\nSome **bold `x`** text'}</Markdown>);
+
+    for (const name of ['code', 'x']) {
+      const style = styleOf(screen.getByText(name));
+      expect(style).toMatchObject({ fontFamily: MONO, fontSize: typography.mono.fontSize });
+      expect(style.fontWeight).toBeUndefined();
+      expect(style.lineHeight).toBeUndefined();
+    }
   });
 
   it('renders fenced code blocks monospace inside a horizontal scroll view', async () => {
@@ -234,12 +245,23 @@ describe('Markdown', () => {
   });
 
   it('keeps text readable in the dark theme', async () => {
-    mockTheme = DARK;
+    mockScheme = 'dark';
     await render(<Markdown>{'plain text and `code`\n\n```\nblock\n```'}</Markdown>);
 
-    expect(styleOf(screen.getByText(/plain text/)).color).toBe(DARK.colors.text);
-    expect(styleOf(screen.getByText('block')).color).toBe(DARK.colors.text);
-    expect(styleOf(screen.getByTestId('markdown-code-block')).backgroundColor).toBe(DARK.colors.border);
+    expect(styleOf(screen.getByText(/plain text/)).color).toBe(colors.dark.text);
+    expect(styleOf(screen.getByText('block')).color).toBe(colors.dark.text);
+    expect(styleOf(screen.getByTestId('markdown-code-block')).backgroundColor).toBe(colors.dark.elevated);
+  });
+});
+
+describe('Markdown theme', () => {
+  it.each(['light', 'dark'] as const)('colors links, rules and quotes from the %s theme', async (scheme) => {
+    mockScheme = scheme;
+    await render(<Markdown>{'[docs](https://example.com)\n\n---\n\n> quoted'}</Markdown>);
+
+    expect(styleOf(screen.getByRole('link', { name: 'docs' })).color).toBe(colors[scheme].accent);
+    expect(styleOf(screen.getByTestId('markdown-hr')).backgroundColor).toBe(colors[scheme].separator);
+    expect(styleOf(screen.getByTestId('markdown-blockquote')).borderLeftColor).toBe(colors[scheme].separator);
   });
 });
 

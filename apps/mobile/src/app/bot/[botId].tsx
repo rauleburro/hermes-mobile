@@ -1,6 +1,6 @@
 import type { RunEvent, SessionMessage } from '@hermes-mobile/api';
 import * as Crypto from 'expo-crypto';
-import { Stack, useLocalSearchParams, useTheme } from 'expo-router';
+import { Stack, useLocalSearchParams } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -19,8 +19,8 @@ import { BffError, followBotRun, getBotChat, getBotMessages, REQUEST_TIMEOUT_MS,
 import { dropChat, readChat, savedDataHint, writeChat } from '@/lib/cache';
 import { buildChatItems, isFinalAnswer, maxRowId, mergeRows, type ChatItem } from '@/lib/chatItems';
 import { loadConfig, pairedUrl } from '@/lib/config';
-import { placeholderColor } from '@/lib/theme';
 import { useTurnPolling } from '@/lib/useTurnPolling';
+import { buttonColor, typography, useTheme } from '@/theme';
 
 type Line = { key: string; role: MessageRole | 'status'; text: string };
 type Item = ChatItem | { kind: 'status'; key: string; text: string };
@@ -112,8 +112,7 @@ function useElapsed(since: number | null) {
 
 export default function BotChatScreen() {
   const { botId, name } = useLocalSearchParams<{ botId: string; name?: string }>();
-  const theme = useTheme();
-  const { colors } = theme;
+  const { colors, placeholder } = useTheme();
   const headerHeight = useHeaderHeight();
   // First paint comes from the paired BFF's saved copy (synchronous), then the BFF replaces it.
   // The saved copy is text only, so tool cards only ever come from the BFF.
@@ -365,7 +364,7 @@ export default function BotChatScreen() {
     <Stack.Screen
       options={{
         title,
-        headerRight: () => (runId ? <Button title="Stop" color="#d33" onPress={() => stop(runId)} /> : undefined),
+        headerRight: () => (runId ? <Button title="Stop" color={buttonColor(colors, 'danger')} onPress={() => stop(runId)} /> : undefined),
       }}
     />
   );
@@ -402,8 +401,8 @@ export default function BotChatScreen() {
       {header}
       {freshness !== 'fresh' ? (
         <View style={styles.hintRow}>
-          <Text style={[styles.hint, { color: colors.text }]}>{freshness === 'offline' ? savedHint : 'Updating…'}</Text>
-          {freshness === 'offline' ? <Button title="Retry" onPress={load} /> : null}
+          <Text style={[styles.hint, { color: colors.textSecondary }]}>{freshness === 'offline' ? savedHint : 'Updating…'}</Text>
+          {freshness === 'offline' ? <Button title="Retry" color={buttonColor(colors, 'accent')} onPress={load} /> : null}
         </View>
       ) : null}
       <FlatList
@@ -414,16 +413,16 @@ export default function BotChatScreen() {
         keyExtractor={(item) => item.key}
         renderItem={({ item }) =>
           item.kind === 'status' ? (
-            <Text style={[styles.status, { color: colors.text }]}>{item.text}</Text>
+            <Text style={[styles.status, { color: colors.textSecondary }]}>{item.text}</Text>
           ) : item.kind === 'tool' ? (
             <ToolCard name={item.name} args={item.args} rawArgs={item.rawArgs} status={item.status} result={item.result} />
           ) : (
-            <MessageBubble role={item.role} text={item.text} />
+            <MessageBubble botId={botId} role={item.role} text={item.text} />
           )
         }
       />
       {notice ? (
-        <View style={[styles.banner, { borderColor: colors.border }]}>
+        <View style={[styles.banner, { borderColor: colors.separator }]}>
           <Text style={[styles.bannerText, { color: colors.text }]}>
             {notice.kind === 'not-sent'
               ? `Message not sent: ${notice.message}`
@@ -433,21 +432,21 @@ export default function BotChatScreen() {
                   ? `Couldn't refresh the Bot Chat (${notice.message}). Some messages may be missing.`
                   : notice.message}
           </Text>
-          {notice.kind === 'not-sent' ? <Button title="Resend" onPress={resend} disabled={working} /> : null}
-          {notice.kind === 'lost' || notice.kind === 'stale' ? <Button title="Refresh" onPress={refresh} /> : null}
+          {notice.kind === 'not-sent' ? <Button title="Resend" color={buttonColor(colors, 'accent')} onPress={resend} disabled={working} /> : null}
+          {notice.kind === 'lost' || notice.kind === 'stale' ? <Button title="Refresh" color={buttonColor(colors, 'accent')} onPress={refresh} /> : null}
         </View>
       ) : null}
-      <View style={[styles.composer, { borderColor: colors.border }]}>
+      <View style={[styles.composer, { borderColor: colors.separator }]}>
         <TextInput
-          style={[styles.input, { color: colors.text, borderColor: colors.border }]}
+          style={[styles.input, { color: colors.text, borderColor: colors.separator }]}
           value={draft}
           onChangeText={setDraft}
           placeholder={`Message ${title}`}
-          placeholderTextColor={placeholderColor(theme)}
+          placeholderTextColor={placeholder}
           multiline
           editable={!working}
         />
-        <Button title="Send" onPress={send} disabled={!draft.trim() || working || freshness !== 'fresh'} />
+        <Button title="Send" color={buttonColor(colors, 'accent')} onPress={send} disabled={!draft.trim() || working || freshness !== 'fresh'} />
       </View>
     </KeyboardAvoidingView>
   );
@@ -456,13 +455,13 @@ export default function BotChatScreen() {
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   list: { padding: 12, gap: 8 },
-  status: { alignSelf: 'center', opacity: 0.6, fontSize: 13 },
+  status: { ...typography.footnote, alignSelf: 'center' },
   hintRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 2 },
-  hint: { textAlign: 'center', opacity: 0.6, fontSize: 12, paddingVertical: 4 },
+  hint: { ...typography.footnote, textAlign: 'center', paddingVertical: 4 },
   notice: { flex: 1, padding: 24, justifyContent: 'center' },
-  noticeText: { fontSize: 16, textAlign: 'center', lineHeight: 22 },
+  noticeText: { ...typography.body, textAlign: 'center' },
   banner: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 6, borderTopWidth: StyleSheet.hairlineWidth },
-  bannerText: { flex: 1, fontSize: 13 },
+  bannerText: { ...typography.footnote, flex: 1 },
   composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, padding: 8, borderTopWidth: StyleSheet.hairlineWidth },
-  input: { flex: 1, maxHeight: 140, borderWidth: StyleSheet.hairlineWidth, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 8, fontSize: 16 },
+  input: { flex: 1, maxHeight: 140, borderWidth: StyleSheet.hairlineWidth, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 8, fontSize: typography.body.fontSize },
 });
