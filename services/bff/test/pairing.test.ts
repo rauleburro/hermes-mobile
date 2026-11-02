@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { appScheme, pairingLink, pairingUrl, preparePairing, resolveAppScheme } from '../src/pairing.ts';
+import { appScheme, pairingLink, pairingNotes, pairingUrl, preparePairing, resolveAppScheme, resolveBffHosts } from '../src/pairing.ts';
 
 describe('pairingUrl', () => {
   it('uses --url when given (adb reverse, Tailscale, a reverse proxy), without trailing slash', () => {
@@ -92,6 +92,7 @@ describe('preparePairing', () => {
       changed: false,
       port: '8800',
       scheme: 'hermesmobile',
+      hosts: ['0.0.0.0'],
     });
   });
 
@@ -123,5 +124,104 @@ describe('preparePairing', () => {
     const spy = vi.fn(generateToken);
     expect(() => preparePairing({ envText: 'DEVICE_TOKEN=old-token\n', rotate: true, shellScheme: 'Bad', generateToken: spy })).toThrow(/APP_SCHEME/);
     expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveBffHosts', () => {
+  it('prefers the shell value over the .env file, like APP_SCHEME', () => {
+    expect(resolveBffHosts('127.0.0.1', 'BFF_HOST=100.64.0.10\n')).toEqual(['127.0.0.1']);
+    expect(resolveBffHosts('  ', 'BFF_HOST=100.64.0.10\n')).toEqual(['100.64.0.10']);
+  });
+
+  it('reads a list from the .env file, ignoring comments, and defaults to 0.0.0.0', () => {
+    expect(resolveBffHosts(undefined, '# BFF_HOST=1.2.3.4\nBFF_HOST=127.0.0.1, 100.64.0.10\n')).toEqual(['127.0.0.1', '100.64.0.10']);
+    expect(resolveBffHosts(undefined, 'BFF_PORT=8787\n')).toEqual(['0.0.0.0']);
+  });
+
+  it('throws on an invalid entry', () => {
+    expect(() => resolveBffHosts('nope', '')).toThrow(/BFF_HOST.*"nope"/);
+  });
+});
+
+describe('preparePairing hosts', () => {
+  const generateToken = () => 'new-token';
+
+  it('returns the hosts from the shell, then the file', () => {
+    const envText = 'DEVICE_TOKEN=t\nBFF_HOST=127.0.0.1\n';
+    expect(preparePairing({ envText, rotate: false, shellScheme: undefined, shellHost: '100.64.0.10', generateToken }).hosts).toEqual(['100.64.0.10']);
+    expect(preparePairing({ envText, rotate: false, shellScheme: undefined, generateToken }).hosts).toEqual(['127.0.0.1']);
+  });
+
+  it('validates BFF_HOST before generating a token, so a bad value never rotates it', () => {
+    const spy = vi.fn(generateToken);
+    expect(() => preparePairing({ envText: 'DEVICE_TOKEN=old\nBFF_HOST=nope\n', rotate: true, shellScheme: undefined, generateToken: spy })).toThrow(/BFF_HOST/);
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe('pairingUrl follows BFF_HOST', () => {
+  const lanIp = '192.0.2.10';
+
+  it('loopback only: localhost', () => {
+    expect(pairingUrl({ argv: [], port: '8787', lanIp, hosts: ['127.0.0.1'] })).toBe('http://localhost:8787');
+    expect(pairingUrl({ argv: [], port: '8787', lanIp, hosts: ['localhost', '::1'] })).toBe('http://localhost:8787');
+  });
+
+  it('uses the first entry that is neither loopback nor wildcard', () => {
+    expect(pairingUrl({ argv: [], port: '8787', lanIp, hosts: ['127.0.0.1', '100.64.0.10', '100.64.0.11'] })).toBe('http://100.64.0.10:8787');
+    expect(pairingUrl({ argv: [], port: '8787', lanIp, hosts: ['0.0.0.0', '100.64.0.10'] })).toBe('http://100.64.0.10:8787');
+  });
+
+  it('brackets an IPv6 address and escapes a zone id', () => {
+    expect(pairingUrl({ argv: [], port: '8787', hosts: ['fd7a:115c:a1e0::1'] })).toBe('http://[fd7a:115c:a1e0::1]:8787');
+    expect(pairingUrl({ argv: [], port: '8787', hosts: ['fe80::1%en0'] })).toBe('http://[fe80::1%25en0]:8787');
+  });
+
+  it('a wildcard (with loopback or alone) gives the first LAN address, as before', () => {
+    expect(pairingUrl({ argv: [], port: '8787', lanIp, hosts: ['0.0.0.0'] })).toBe('http://192.0.2.10:8787');
+    expect(pairingUrl({ argv: [], port: '8787', lanIp, hosts: ['127.0.0.1', '::'] })).toBe('http://192.0.2.10:8787');
+    expect(pairingUrl({ argv: [], port: '8787', hosts: ['0.0.0.0'] })).toBe('http://localhost:8787');
+  });
+
+  it('an explicit --url still wins', () => {
+    expect(pairingUrl({ argv: ['--url', 'http://bff.example:9000'], port: '8787', lanIp, hosts: ['127.0.0.1'] })).toBe('http://bff.example:9000');
+  });
+});
+
+describe('pairingNotes', () => {
+  const base = { port: '8787' };
+
+  it('hints adb reverse when the link points at loopback', () => {
+    const notes = pairingNotes({ ...base, argv: [], url: 'http://localhost:8787', hosts: ['127.0.0.1'] });
+    expect(notes).toEqual([expect.stringContaining('adb reverse tcp:8787 tcp:8787')]);
+  });
+
+  it('is silent for a LAN or Tailscale link that BFF_HOST covers', () => {
+    expect(pairingNotes({ ...base, argv: [], url: 'http://100.64.0.10:8787', hosts: ['127.0.0.1', '100.64.0.10'] })).toEqual([]);
+    expect(pairingNotes({ ...base, argv: ['--url', 'http://192.0.2.10:8787'], url: 'http://192.0.2.10:8787', hosts: ['0.0.0.0'] })).toEqual([]);
+  });
+
+  it('warns when an explicit --url IP is not covered by BFF_HOST', () => {
+    const notes = pairingNotes({ ...base, argv: ['--url', 'http://192.0.2.10:8787'], url: 'http://192.0.2.10:8787', hosts: ['127.0.0.1', '100.64.0.10'] });
+    expect(notes).toEqual([expect.stringMatching(/^Warning:.*192\.0\.2\.10.*BFF_HOST/)]);
+  });
+
+  it('warns when --url is localhost but BFF_HOST has no loopback address', () => {
+    const notes = pairingNotes({ ...base, argv: ['--url', 'http://localhost:8787'], url: 'http://localhost:8787', hosts: ['100.64.0.10'] });
+    expect(notes.some((n) => n.startsWith('Warning:'))).toBe(true);
+  });
+
+  it('does not warn for a hostname it cannot resolve (Tailscale name, reverse proxy)', () => {
+    expect(pairingNotes({ ...base, argv: ['--url', 'https://bff.example.ts.net'], url: 'https://bff.example.ts.net', hosts: ['127.0.0.1'] })).toEqual([]);
+  });
+
+  it('treats "::" as covering IPv4 too, and 0.0.0.0 as not covering IPv6', () => {
+    expect(pairingNotes({ ...base, argv: ['--url', 'http://192.0.2.10:8787'], url: 'http://192.0.2.10:8787', hosts: ['::'] })).toEqual([]);
+    expect(pairingNotes({ ...base, argv: ['--url', 'http://[fd7a::1]:8787'], url: 'http://[fd7a::1]:8787', hosts: ['0.0.0.0'] })).toHaveLength(1);
+  });
+
+  it('still hints adb reverse for an explicit loopback --url that BFF_HOST covers', () => {
+    const notes = pairingNotes({ ...base, argv: ['--url', 'http://localhost:8787'], url: 'http://localhost:8787', hosts: ['127.0.0.1'] });
+    expect(notes).toEqual([expect.stringContaining('adb reverse')]);
   });
 });
