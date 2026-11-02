@@ -8,6 +8,7 @@ import {
   Button,
   FlatList,
   KeyboardAvoidingView,
+  Platform,
   StyleSheet,
   Text,
   TextInput,
@@ -364,7 +365,7 @@ export default function BotChatScreen() {
     <Stack.Screen
       options={{
         title,
-        headerRight: () => (runId ? <Button title="Stop" color={colors.danger} onPress={() => stop(runId)} /> : undefined),
+        headerRight: () => (runId ? <Button title="Stop" color={Platform.OS === 'android' ? colors.dangerFill : colors.danger} onPress={() => stop(runId)} /> : undefined),
       }}
     />
   );

@@ -14,7 +14,7 @@ import {
   stopBotRun,
 } from '@mobile/lib/bff';
 import { buildChatItems } from '@mobile/lib/chatItems';
-import { botHue, colors } from '@mobile/theme';
+import { botHue, colors, contrastRatio } from '@mobile/theme';
 import { TURN_POLL_MAX_INTERVAL_MS, TURN_POLL_MAX_MS, TURN_POLL_MS } from '@mobile/lib/useTurnPolling';
 
 // Which Bot's chat is open; a test can open another one.
@@ -216,7 +216,29 @@ describe('BotChatScreen', () => {
 
     const stop = await screen.findByRole('button', { name: 'Stop' });
     expect(StyleSheet.flatten(screen.getByText('Stop').props.style).color).toBe(colors[scheme].danger);
+    expect(contrastRatio(colors[scheme].danger, colors[scheme].bg)).toBeGreaterThanOrEqual(4.5);
     expect(stop).toBeOnTheScreen();
+  });
+
+  // On Android a Button's color is its background and the label is white (colors[scheme].onDangerFill).
+  it.each(['light', 'dark'] as const)('draws Stop on Android as a fill its white label can be read on (%s)', async (scheme) => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue(scheme);
+    controllableRun();
+    await render(<BotChatScreen />);
+    const user = userEvent.setup();
+    await user.type(await screen.findByPlaceholderText('Message Hermes'), '[e2e] ping');
+    await user.press(screen.getByRole('button', { name: /^send$/i })); // Android upper-cases button labels
+
+    await screen.findByRole('button', { name: /^stop$/i });
+    // Whichever touchable the Button module picked when it loaded, the fill sits on an ancestor of the label.
+    let fill: string | undefined;
+    for (let node = screen.getByText(/^stop$/i).parent; node && !fill; node = node.parent) {
+      fill = StyleSheet.flatten(node.props.style)?.backgroundColor;
+    }
+    expect(contrastRatio(fill!, '#FFFFFF')).toBeGreaterThanOrEqual(4.5); // RN draws the label white on Android
+    expect(fill).toBe(colors[scheme].dangerFill);
+    expect(colors[scheme].onDangerFill).toBe('#FFFFFF');
   });
 
   it.each(['light', 'dark'] as const)('colors the chat bubbles in the %s scheme: the Bot hue for you, the surface for the Bot', async (scheme) => {

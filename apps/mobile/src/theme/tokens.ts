@@ -11,6 +11,10 @@ export type ColorRoles = {
   accent: string;
   attention: string;
   danger: string;
+  /** Solid danger background (Android draws a Button's color as its background). */
+  dangerFill: string;
+  /** Label on `dangerFill`: React Native draws Android Button labels white. */
+  onDangerFill: string;
   success: string;
 };
 
@@ -26,6 +30,8 @@ export const colors: { light: ColorRoles; dark: ColorRoles } = {
     accent: '#7C8BFF',
     attention: '#FF9F45',
     danger: '#FF6369',
+    dangerFill: '#CD2B31',
+    onDangerFill: '#FFFFFF',
     success: '#4CC38A',
   },
   light: {
@@ -39,6 +45,8 @@ export const colors: { light: ColorRoles; dark: ColorRoles } = {
     accent: '#3B4BDB',
     attention: '#C25E00',
     danger: '#CD2B31',
+    dangerFill: '#CD2B31',
+    onDangerFill: '#FFFFFF',
     success: '#18794E',
   },
 };

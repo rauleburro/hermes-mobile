@@ -12,11 +12,13 @@ const ROLES = [
   'accent',
   'attention',
   'danger',
+  'dangerFill',
+  'onDangerFill',
   'success',
 ];
 
 describe('color roles', () => {
-  it.each(['light', 'dark'] as const)('%s defines exactly the 11 roles', (scheme) => {
+  it.each(['light', 'dark'] as const)('%s defines exactly the 13 roles', (scheme) => {
     expect(Object.keys(colors[scheme]).sort()).toEqual([...ROLES].sort());
   });
 
@@ -36,6 +38,10 @@ describe.each(['light', 'dark'] as const)('contrast (%s)', (scheme) => {
     ['danger', 4.5],
   ] as const)('%s on bg is at least %s', (role, min) => {
     expect(contrastRatio(c[role], c.bg)).toBeGreaterThanOrEqual(min);
+  });
+
+  it('the danger fill carries a readable label (Android draws a Button label on its fill)', () => {
+    expect(contrastRatio(c.onDangerFill, c.dangerFill)).toBeGreaterThanOrEqual(4.5);
   });
 
   it('text on surface is at least 4.5', () => {
