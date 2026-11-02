@@ -6,7 +6,7 @@ import { checkHealth } from '@/lib/bff';
 import { type BffConfig, loadConfig, saveConfig } from '@/lib/config';
 import { ensureLocalNetworkAccess, LOCAL_NETWORK_HINT, localNetworkHint } from '@/lib/localNetwork';
 import { normalizeBffUrl, parsePairParams } from '@/lib/pairing';
-import { typography, useTheme } from '@/theme';
+import { buttonColor, typography, useTheme } from '@/theme';
 
 // Reached manually or via <scheme>://pair (hermesmobile unless the build sets APP_SCHEME)?url=…&token=… (the QR printed by `pnpm pair`).
 // The link only prefills the form: nothing is stored until the user taps Pair.
@@ -114,12 +114,12 @@ export default function PairScreen() {
       <Text style={[styles.label, { color: colors.text }]}>Device token</Text>
       <TextInput style={input} value={token} onChangeText={(t) => (setToken(t), setTokenFromStore(false))} placeholder="from `pnpm pair`" placeholderTextColor={placeholder} autoCapitalize="none" autoCorrect={false} secureTextEntry />
       {replacing && <Text style={{ color: colors.text }}>Pairing replaces the current BFF ({stored?.url}).</Text>}
-      {busy ? <ActivityIndicator /> : <Button title="Pair" onPress={pair} disabled={!url || !token} />}
+      {busy ? <ActivityIndicator /> : <Button title="Pair" color={buttonColor(colors, 'accent')} onPress={pair} disabled={!url || !token} />}
       {status && <Text style={{ color: colors.danger }}>{status}</Text>}
       {networkHint && (
         <>
           <Text style={{ color: colors.text }}>{networkHint}</Text>
-          <Button title="Open settings" onPress={() => Linking.openSettings()} />
+          <Button title="Open settings" color={buttonColor(colors, 'accent')} onPress={() => Linking.openSettings()} />
         </>
       )}
     </View>

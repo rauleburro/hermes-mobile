@@ -9,7 +9,7 @@ import { lastMessagePreview } from '@/lib/bots';
 import { bindCache, readRoster, savedDataHint, writeRoster } from '@/lib/cache';
 import { loadConfig, pairedUrl } from '@/lib/config';
 import { checkedLocalNetworkHint } from '@/lib/localNetwork';
-import { typography, useTheme } from '@/theme';
+import { buttonColor, typography, useTheme } from '@/theme';
 
 const NO_BOT_CHAT = 'No Bot Chat yet';
 
@@ -115,7 +115,7 @@ export default function HomeScreen() {
         headerLeft: () => (
           // The native header puts the title right after headerLeft: keep a gap.
           <View testID="pair-action" style={styles.headerAction}>
-            <Button title="Pair" onPress={() => router.push('/pair')} />
+            <Button title="Pair" color={buttonColor(colors, 'accent')} onPress={() => router.push('/pair')} />
           </View>
         ),
       }}
@@ -178,7 +178,7 @@ export default function HomeScreen() {
               // A roster is on screen (saved, or fresh from an earlier refresh): keep it, say why it may be old.
               <View style={styles.hintRow}>
                 <Text style={[styles.hint, styles.hintText, { color: colors.textSecondary }]}>{savedHint}</Text>
-                <Button title="Retry" onPress={refresh} />
+                <Button title="Retry" color={buttonColor(colors, 'accent')} onPress={refresh} />
               </View>
             ) : fromCache && loading ? (
               <Text style={[styles.hint, { color: colors.textSecondary }]}>Updating…</Text>
@@ -188,7 +188,7 @@ export default function HomeScreen() {
             {error && networkHint ? (
               <View style={styles.networkHint}>
                 <Text style={{ color: colors.text }}>{networkHint}</Text>
-                <Button title="Open settings" onPress={() => Linking.openSettings()} />
+                <Button title="Open settings" color={buttonColor(colors, 'accent')} onPress={() => Linking.openSettings()} />
               </View>
             ) : null}
           </>

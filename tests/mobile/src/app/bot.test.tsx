@@ -241,6 +241,21 @@ describe('BotChatScreen', () => {
     expect(colors[scheme].onDangerFill).toBe('#FFFFFF');
   });
 
+  it.each(['light', 'dark'] as const)('draws Send on Android as a fill its white label can be read on (%s)', async (scheme) => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue(scheme);
+    await render(<BotChatScreen />);
+    await userEvent.setup().type(await screen.findByPlaceholderText('Message Hermes'), 'hello'); // a Send with no draft is disabled (gray)
+
+    let fill: string | undefined;
+    for (let node = screen.getByText(/^send$/i).parent; node && !fill; node = node.parent) {
+      fill = StyleSheet.flatten(node.props.style)?.backgroundColor;
+    }
+    expect(fill).toBe(colors[scheme].accentFill);
+    expect(contrastRatio(fill!, colors[scheme].onAccentFill)).toBeGreaterThanOrEqual(4.5);
+    expect(colors[scheme].onAccentFill).toBe('#FFFFFF'); // RN draws the label white on Android
+  });
+
   it.each(['light', 'dark'] as const)('colors the chat bubbles in the %s scheme: the Bot hue for you, the surface for the Bot', async (scheme) => {
     jest.spyOn(ReactNative, 'useColorScheme').mockReturnValue(scheme);
     mockBotId = ['research-bot', 'writer', 'ops'].find((id) => botHue(id).fill !== botHue('default').fill)!;

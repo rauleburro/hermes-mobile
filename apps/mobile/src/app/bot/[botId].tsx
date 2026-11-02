@@ -8,7 +8,6 @@ import {
   Button,
   FlatList,
   KeyboardAvoidingView,
-  Platform,
   StyleSheet,
   Text,
   TextInput,
@@ -21,7 +20,7 @@ import { dropChat, readChat, savedDataHint, writeChat } from '@/lib/cache';
 import { buildChatItems, isFinalAnswer, maxRowId, mergeRows, type ChatItem } from '@/lib/chatItems';
 import { loadConfig, pairedUrl } from '@/lib/config';
 import { useTurnPolling } from '@/lib/useTurnPolling';
-import { typography, useTheme } from '@/theme';
+import { buttonColor, typography, useTheme } from '@/theme';
 
 type Line = { key: string; role: MessageRole | 'status'; text: string };
 type Item = ChatItem | { kind: 'status'; key: string; text: string };
@@ -365,7 +364,7 @@ export default function BotChatScreen() {
     <Stack.Screen
       options={{
         title,
-        headerRight: () => (runId ? <Button title="Stop" color={Platform.OS === 'android' ? colors.dangerFill : colors.danger} onPress={() => stop(runId)} /> : undefined),
+        headerRight: () => (runId ? <Button title="Stop" color={buttonColor(colors, 'danger')} onPress={() => stop(runId)} /> : undefined),
       }}
     />
   );
@@ -403,7 +402,7 @@ export default function BotChatScreen() {
       {freshness !== 'fresh' ? (
         <View style={styles.hintRow}>
           <Text style={[styles.hint, { color: colors.textSecondary }]}>{freshness === 'offline' ? savedHint : 'Updating…'}</Text>
-          {freshness === 'offline' ? <Button title="Retry" onPress={load} /> : null}
+          {freshness === 'offline' ? <Button title="Retry" color={buttonColor(colors, 'accent')} onPress={load} /> : null}
         </View>
       ) : null}
       <FlatList
@@ -433,8 +432,8 @@ export default function BotChatScreen() {
                   ? `Couldn't refresh the Bot Chat (${notice.message}). Some messages may be missing.`
                   : notice.message}
           </Text>
-          {notice.kind === 'not-sent' ? <Button title="Resend" onPress={resend} disabled={working} /> : null}
-          {notice.kind === 'lost' || notice.kind === 'stale' ? <Button title="Refresh" onPress={refresh} /> : null}
+          {notice.kind === 'not-sent' ? <Button title="Resend" color={buttonColor(colors, 'accent')} onPress={resend} disabled={working} /> : null}
+          {notice.kind === 'lost' || notice.kind === 'stale' ? <Button title="Refresh" color={buttonColor(colors, 'accent')} onPress={refresh} /> : null}
         </View>
       ) : null}
       <View style={[styles.composer, { borderColor: colors.separator }]}>
@@ -447,7 +446,7 @@ export default function BotChatScreen() {
           multiline
           editable={!working}
         />
-        <Button title="Send" onPress={send} disabled={!draft.trim() || working || freshness !== 'fresh'} />
+        <Button title="Send" color={buttonColor(colors, 'accent')} onPress={send} disabled={!draft.trim() || working || freshness !== 'fresh'} />
       </View>
     </KeyboardAvoidingView>
   );

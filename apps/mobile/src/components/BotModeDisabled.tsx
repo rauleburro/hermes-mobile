@@ -1,5 +1,5 @@
 import { Button, StyleSheet, Text, View } from 'react-native';
-import { typography, useTheme } from '@/theme';
+import { buttonColor, typography, useTheme } from '@/theme';
 
 /** Shown when Hermes has no Bots: the app is a Bots client and never creates loose sessions. */
 export function BotModeDisabled({ onRetry, error }: { onRetry: () => void; error?: string | null }) {
@@ -17,7 +17,7 @@ export function BotModeDisabled({ onRetry, error }: { onRetry: () => void; error
       <Text style={[styles.step, text]}>3. Open the Bot once there so its Bot Chat exists.</Text>
       <Text style={[styles.body, secondary]}>Then come back and check again.</Text>
       {error ? <Text style={[styles.body, { color: colors.danger }]}>{error}</Text> : null}
-      <Button title="Check again" onPress={onRetry} />
+      <Button title="Check again" color={buttonColor(colors, 'accent')} onPress={onRetry} />
     </View>
   );
 }

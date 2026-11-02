@@ -14,11 +14,13 @@ const ROLES = [
   'danger',
   'dangerFill',
   'onDangerFill',
+  'accentFill',
+  'onAccentFill',
   'success',
 ];
 
 describe('color roles', () => {
-  it.each(['light', 'dark'] as const)('%s defines exactly the 13 roles', (scheme) => {
+  it.each(['light', 'dark'] as const)('%s defines exactly the 15 roles', (scheme) => {
     expect(Object.keys(colors[scheme]).sort()).toEqual([...ROLES].sort());
   });
 
