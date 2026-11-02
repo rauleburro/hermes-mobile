@@ -14,7 +14,7 @@ import {
   stopBotRun,
 } from '@mobile/lib/bff';
 import { buildChatItems } from '@mobile/lib/chatItems';
-import { botHue, colors, contrastRatio } from '@mobile/theme';
+import { botHue, colors, contrastRatio, typography } from '@mobile/theme';
 import { TURN_POLL_MAX_INTERVAL_MS, TURN_POLL_MAX_MS, TURN_POLL_MS } from '@mobile/lib/useTurnPolling';
 
 // Which Bot's chat is open; a test can open another one.
@@ -810,6 +810,9 @@ describe('BotChatScreen composer', () => {
     const input = await screen.findByPlaceholderText('Message Hermes');
     expect(input).toHaveProp('placeholderTextColor', colors[scheme].textSecondary) // the theme's placeholder is the secondary text role;
     expect(StyleSheet.flatten(input.props.style)).toMatchObject({ color: colors[scheme].text, borderColor: colors[scheme].separator });
+    // Only the size comes from the body style: a fixed line height clips multi-line and large-font text.
+    expect(StyleSheet.flatten(input.props.style)).toMatchObject({ fontSize: typography.body.fontSize });
+    expect(StyleSheet.flatten(input.props.style).lineHeight).toBeUndefined();
   });
 
   it.each([

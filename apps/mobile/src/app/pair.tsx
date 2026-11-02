@@ -129,5 +129,5 @@ export default function PairScreen() {
 const styles = StyleSheet.create({
   container: { padding: 16, gap: 12 },
   label: { fontWeight: '600' },
-  input: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 8, padding: 12, ...typography.body },
+  input: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 8, padding: 12, fontSize: typography.body.fontSize },
 });

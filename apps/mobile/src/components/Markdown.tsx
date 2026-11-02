@@ -154,7 +154,7 @@ function renderInline(tokens: Token[], colors: Colors, prefix: string): ReactNod
         );
       case 'codespan':
         return (
-          <Text key={key} style={[styles.code, { backgroundColor: colors.elevated }]}>
+          <Text key={key} style={[styles.inlineCode, { backgroundColor: colors.elevated }]}>
             {(token as Tokens.Codespan).text}
           </Text>
         );
@@ -199,7 +199,10 @@ const styles = StyleSheet.create({
   em: { fontStyle: 'italic' },
   del: { textDecorationLine: 'line-through' },
   link: { textDecorationLine: 'underline' },
+  // Block code takes the whole mono style; inline code only its face and size, so it keeps the weight and
+  // line height of the text around it (bold, headings).
   code: { ...typography.mono },
+  inlineCode: { fontSize: typography.mono.fontSize, fontFamily: typography.mono.fontFamily },
   // A horizontal ScrollView grows to fill its column parent unless told not to.
   codeBlock: { borderRadius: 8, flexGrow: 0 },
   codeBlockContent: { padding: 10 },

@@ -6,7 +6,7 @@ import PairScreen from '@mobile/app/pair';
 import { BffError, checkHealth } from '@mobile/lib/bff';
 import { loadConfig, saveConfig } from '@mobile/lib/config';
 import { ensureLocalNetworkAccess, LOCAL_NETWORK_HINT, localNetworkHint } from '@mobile/lib/localNetwork';
-import { colors } from '@mobile/theme';
+import { colors, typography } from '@mobile/theme';
 
 // The screen only needs the route params (the pairing link's query) and router.replace.
 const mockParams = jest.fn((): Record<string, string | string[]> => ({}));
@@ -59,6 +59,8 @@ describe('PairScreen theme', () => {
     for (const field of [urlField(), screen.getByPlaceholderText('from `pnpm pair`')]) {
       expect(field).toHaveProp('placeholderTextColor', colors[scheme].textSecondary);
       expect(StyleSheet.flatten(field.props.style)).toMatchObject({ color: colors[scheme].text, borderColor: colors[scheme].separator });
+      expect(StyleSheet.flatten(field.props.style)).toMatchObject({ fontSize: typography.body.fontSize });
+      expect(StyleSheet.flatten(field.props.style).lineHeight).toBeUndefined();
     }
     expect(StyleSheet.flatten(screen.getByText('BFF URL').props.style).color).toBe(colors[scheme].text);
 

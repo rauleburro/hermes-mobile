@@ -3,7 +3,7 @@ import * as ReactNative from 'react-native';
 import { Linking, Platform, StyleSheet } from 'react-native';
 import { Markdown } from '@mobile/components/Markdown';
 import { hasOpenableLinks as hasLinks, parseMarkdown } from '@mobile/lib/markdown';
-import { colors } from '@mobile/theme';
+import { colors, typography } from '@mobile/theme';
 
 // The component reads its colors from the app theme, which follows the system color scheme. Each test can switch it.
 let mockScheme: 'light' | 'dark' = 'light';
@@ -67,6 +67,17 @@ describe('Markdown', () => {
 
     expect(styleOf(screen.getByText('pnpm test')).fontFamily).toBe(MONO);
     expect(screen.queryByText(/`/)).toBeNull();
+  });
+
+  it('keeps inline code to the mono face and size, so it inherits the weight and line height around it', async () => {
+    await render(<Markdown>{'# Heading with `code`\n\nSome **bold `x`** text'}</Markdown>);
+
+    for (const name of ['code', 'x']) {
+      const style = styleOf(screen.getByText(name));
+      expect(style).toMatchObject({ fontFamily: MONO, fontSize: typography.mono.fontSize });
+      expect(style.fontWeight).toBeUndefined();
+      expect(style.lineHeight).toBeUndefined();
+    }
   });
 
   it('renders fenced code blocks monospace inside a horizontal scroll view', async () => {
