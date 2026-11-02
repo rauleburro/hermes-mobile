@@ -4,6 +4,8 @@ export type BotHue = {
   name: BotHueName;
   /** Solid color for avatars and the user's bubbles (white text on top). */
   fill: string;
+  /** Text color to draw on `fill`: readable (AA) on every hue. */
+  onFill: string;
   /** The same color at low alpha, for chips and spinner tracks. */
   tint: string;
 };
@@ -23,6 +25,7 @@ const FILLS: Record<BotHueName, string> = {
 export const BOT_HUE_NAMES: BotHueName[] = ['indigo', 'teal', 'green', 'olive', 'orange', 'rose', 'violet', 'sky'];
 
 const TINT_ALPHA = '26';
+const ON_FILL = '#FFFFFF';
 
 /** FNV-1a, 32-bit: stable across runs and installs. */
 function hash(value: string): number {
@@ -38,5 +41,5 @@ function hash(value: string): number {
 export function botHue(botId: string): BotHue {
   const name = botId === 'default' ? 'indigo' : BOT_HUE_NAMES[hash(botId) % BOT_HUE_NAMES.length]!;
   const fill = FILLS[name];
-  return { name, fill, tint: `${fill}${TINT_ALPHA}` };
+  return { name, fill, onFill: ON_FILL, tint: `${fill}${TINT_ALPHA}` };
 }

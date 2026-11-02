@@ -31,6 +31,14 @@ describe('botHue', () => {
       expect(contrastRatio(botHue(id).fill, '#FFFFFF')).toBeGreaterThanOrEqual(4.5);
     }
   });
+
+  it('names the text color to draw on a fill: white, readable on every hue', () => {
+    for (const name of BOT_HUE_NAMES) {
+      const hue = botHue(findIdFor(name));
+      expect(hue.onFill).toBe('#FFFFFF');
+      expect(contrastRatio(hue.fill, hue.onFill)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
 });
 
 /** Finds an id that maps to the given hue (all 8 must be reachable). */
